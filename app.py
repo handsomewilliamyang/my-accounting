@@ -9,7 +9,7 @@ import plotly.express as px
 # 網頁標題與基本設定
 st.set_page_config(page_title="雲端記帳本", page_icon="💰", layout="wide")
 
-st.title("💰 我的雲端同步記帳本")
+st.title("💰 我是有錢人")
 st.markdown("手機、電腦隨時同步，資料安全存在 Google 試算表中！")
 
 # Google 試算表網址
