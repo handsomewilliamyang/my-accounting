@@ -10,7 +10,7 @@ import plotly.express as px
 st.set_page_config(page_title="雲端記帳本", page_icon="💰", layout="wide")
 
 st.title("💰 我是有錢人")
-st.markdown("手機、電腦隨時同步，資料安全存在 Google 試算表中！")
+st.markdown("一天一塊錢 七天就有七塊錢")
 
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
