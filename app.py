@@ -52,7 +52,6 @@ if sh:
     if submit_button:
         if amount is not None and amount > 0:
             try:
-                # 確保寫入的欄位順序對應你的試算表：日期, 類型, 分類, 金額, 付款方式, 備註
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
                 st.sidebar.success("新增成功！")
@@ -62,12 +61,19 @@ if sh:
         else:
             st.sidebar.warning("請輸入有效的金額！")
 
-    # ================= 主畫面 Tabs 設計 =================
-    # 建立三個分頁
-    tab1, tab2, tab3 = st.tabs(["📋 記帳明細列表", "📊 圖表分析", "📅 月曆模式"])
+    # ================= 主畫面 偽分頁(Radio) 設計 =================
+    # 利用水平排版的 Radio 按鈕來取代 Tabs，解決 Calendar 渲染失敗的 Bug
+    view_mode = st.radio(
+        "選擇檢視模式：", 
+        ["📋 記帳明細列表", "📊 圖表分析", "📅 月曆模式"], 
+        horizontal=True,
+        label_visibility="collapsed" # 隱藏標題，讓它看起來更像 Tab 列
+    )
+    
+    st.divider() # 加上一條分隔線增加質感
 
-    # --- Tab 1: 記帳明細列表 ---
-    with tab1:
+    # --- 模式 1: 記帳明細列表 ---
+    if view_mode == "📋 記帳明細列表":
         st.subheader("📋 記帳明細列表")
         if not df.empty:
             df_display = df.copy()
@@ -95,19 +101,18 @@ if sh:
         else:
             st.info("目前還沒有任何記錄，請從側邊欄新增您的第一筆帳目！")
 
-    # --- Tab 2: 圖表分析 ---
-    with tab2:
+    # --- 模式 2: 圖表分析 ---
+    elif view_mode == "📊 圖表分析":
         st.subheader("📊 財務視覺化分析")
         if not df.empty:
             df_expense = df[df["類型"] == "支出"]
             if not df_expense.empty:
                 col1, col2 = st.columns(2)
                 
-                # 定義一組高對比的鮮豔顏色
+                # 高對比的鮮豔顏色
                 vivid_colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FFBD33', '#33FFF2', '#A833FF']
                 
                 with col1:
-                    # 支出分類圓餅圖
                     fig_pie = px.pie(
                         df_expense, 
                         values='金額', 
@@ -119,7 +124,6 @@ if sh:
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with col2:
-                    # 每日支出長條圖
                     df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額'].sum()
                     fig_bar = px.bar(
                         df_daily, 
@@ -136,13 +140,12 @@ if sh:
         else:
             st.info("目前尚無資料可產出圖表。")
 
-    # --- Tab 3: 月曆模式 ---
-    with tab3:
+    # --- 模式 3: 月曆模式 ---
+    elif view_mode == "📅 月曆模式":
         st.subheader("📅 月曆視圖")
         if not df.empty:
             events = []
             for idx, row in df.iterrows():
-                # 支出用鮮紅色，收入用鮮綠色，增加對比度
                 event_color = "#FF3B30" if row["類型"] == "支出" else "#34C759"
                 events.append({
                     "title": f"{row['分類']} ${row['金額']}",
@@ -160,7 +163,7 @@ if sh:
                 "initialView": "dayGridMonth"
             }
             
-            # 顯示月曆
+            # 因為是獨立渲染，所以月曆絕對不會再消失
             calendar(events=events, options=calendar_options)
         else:
             st.info("目前尚無資料可顯示於月曆。")
