@@ -36,11 +36,29 @@ if sh:
     except Exception as e:
         df = pd.DataFrame()
 
+    # ================= 計算財務指標 (總收入、總花費) =================
+    total_income = 0
+    total_expense = 0
+    
+    if not df.empty and "類型" in df.columns and "金額" in df.columns:
+        df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
+        
+        total_income = df[df["類型"] == "收入"]["金額"].sum()
+        total_expense = df[df["類型"] == "支出"]["金額"].sum()
+
+    # 僅顯示總收入與總花費兩張指標卡片
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.metric(label="📈 總收入", value=f"${total_income:,}")
+    with col_m2:
+        st.metric(label="📉 總花費", value=f"${total_expense:,}")
+
+    st.divider()
+
     # ================= 側邊欄設計 =================
     st.sidebar.header("➕ 新增記帳")
     
     amount = st.sidebar.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
-    # 在分類中加入「每月固定費用」，方便你追蹤固定開銷
     category = st.sidebar.selectbox("分類", ["每月固定費用", "伙食", "交通", "購物", "娛樂", "其他支出", "薪資", "其他收入"])
     tx_type = st.sidebar.radio("類型", ["支出", "收入"])
     pay_method = st.sidebar.selectbox("付款方式", ["現金", "信用卡"])
@@ -122,14 +140,13 @@ if sh:
     elif view_mode == "📊 圖表與固定費用":
         st.subheader("📌 每月固定費用總覽")
         if not df.empty:
-            # 篩選出分類為「每月固定費用」的項目
             df_fixed = df[df["分類"] == "每月固定費用"]
             if not df_fixed.empty:
                 total_fixed = df_fixed["金額"].sum()
                 st.metric(label="💰 每月固定開銷總計", value=f"${total_fixed:,}")
                 st.dataframe(df_fixed[["日期", "金額", "付款方式", "備註"]], use_container_width=True)
             else:
-                st.info("目前尚無設定「每月固定費用」的紀錄（可在側邊欄新增時選擇此分類）。")
+                st.info("目前尚無設定「每月固定費用」的紀錄。")
         else:
             st.info("目前尚無資料。")
 
