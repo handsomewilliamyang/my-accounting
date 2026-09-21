@@ -36,17 +36,17 @@ if sh:
     except Exception as e:
         df = pd.DataFrame()
 
-    # ================= 側邊欄設計 =================
+    # ================= 側邊欄設計 (移除 form 外框，徹底消除英文提示) =================
     st.sidebar.header("➕ 新增記帳")
-    with st.sidebar.form("add_form"):
-        amount = st.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
-        category = st.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "固定支出", "其他支出", "薪資", "其他收入"])
-        tx_type = st.radio("類型", ["支出", "收入"])
-        pay_method = st.selectbox("付款方式", ["現金", "信用卡"])
-        tx_date = st.date_input("日期", value=date.today())
-        note = st.text_input("備註")
-        
-        submit_button = st.form_submit_button(label="送出記帳")
+    
+    amount = st.sidebar.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
+    category = st.sidebar.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "固定支出", "其他支出", "薪資", "其他收入"])
+    tx_type = st.sidebar.radio("類型", ["支出", "收入"])
+    pay_method = st.sidebar.selectbox("付款方式", ["現金", "信用卡"])
+    tx_date = st.sidebar.date_input("日期", value=date.today())
+    note = st.sidebar.text_input("備註")
+    
+    submit_button = st.sidebar.button("送出記帳")
 
     if submit_button:
         if amount is not None and amount > 0:
