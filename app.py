@@ -37,9 +37,6 @@ if sh:
         df = pd.DataFrame()
 
     # ================= 側邊欄設計 =================
-    # (已移除資產管理區塊，保持簡潔)
-    
-    # 新增記帳表單
     st.sidebar.header("➕ 新增記帳")
     with st.sidebar.form("add_form"):
         # 金額預設為空，點擊直接輸入整數
@@ -65,108 +62,108 @@ if sh:
         else:
             st.sidebar.warning("請輸入有效的金額！")
 
-    # ================= 主畫面設計 =================
-    # 為了避免 calendar 在 tabs 裡顯示不出來的 bug，我們改用 expander（折疊面板）或直接垂直排列
-    
-    # 1. 記帳明細列表
-    st.subheader("📋 記帳明細列表 (可勾選並刪除)")
-    if not df.empty:
-        df_display = df.copy()
-        df_display.insert(0, "刪除", False)
-        
-        edited_df = st.data_editor(
-            df_display, 
-            use_container_width=True,
-            hide_index=True,
-            key="expense_table"
-        )
-        
-        if st.button("🗑️ 刪除所選項目"):
-            rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
-            if rows_to_delete:
-                try:
-                    for row_idx in sorted(rows_to_delete, reverse=True):
-                        worksheet.delete_rows(row_idx + 2)
-                    st.success("已成功刪除選取的項目！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"刪除失敗：{e}")
-            else:
-                st.warning("請先勾選您想要刪除的項目！")
-    else:
-        st.info("目前還沒有任何記錄，請從側邊欄新增您的第一筆帳目！")
+    # ================= 主畫面 Tabs 設計 =================
+    # 建立三個分頁
+    tab1, tab2, tab3 = st.tabs(["📋 記帳明細列表", "📊 圖表分析", "📅 月曆模式"])
 
-    st.divider()
-
-    # 2. 圖表分析 (套用高對比色彩)
-    st.subheader("📊 財務視覺化分析")
-    if not df.empty:
-        df_expense = df[df["類型"] == "支出"]
-        if not df_expense.empty:
-            col1, col2 = st.columns(2)
+    # --- Tab 1: 記帳明細列表 ---
+    with tab1:
+        st.subheader("📋 記帳明細列表")
+        if not df.empty:
+            df_display = df.copy()
+            df_display.insert(0, "刪除", False)
             
-            # 定義一組高對比的鮮豔顏色
-            vivid_colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FFBD33', '#33FFF2', '#A833FF']
+            edited_df = st.data_editor(
+                df_display, 
+                use_container_width=True,
+                hide_index=True,
+                key="expense_table"
+            )
             
-            with col1:
-                # 支出分類圓餅圖
-                fig_pie = px.pie(
-                    df_expense, 
-                    values='金額', 
-                    names='分類', 
-                    title='各類別支出佔比', 
-                    hole=0.4,
-                    color_discrete_sequence=vivid_colors # 套用高對比色
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col2:
-                # 每日支出長條圖
-                df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額'].sum()
-                fig_bar = px.bar(
-                    df_daily, 
-                    x='日期', 
-                    y='金額', 
-                    color='分類',
-                    title='每日總支出趨勢', 
-                    text_auto=True,
-                    color_discrete_sequence=vivid_colors # 套用高對比色
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
+            if st.button("🗑️ 刪除所選項目"):
+                rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
+                if rows_to_delete:
+                    try:
+                        for row_idx in sorted(rows_to_delete, reverse=True):
+                            worksheet.delete_rows(row_idx + 2)
+                        st.success("已成功刪除選取的項目！")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"刪除失敗：{e}")
+                else:
+                    st.warning("請先勾選您想要刪除的項目！")
         else:
-            st.info("目前尚無支出紀錄可產出圖表。")
-    else:
-        st.info("目前尚無資料可產出圖表。")
+            st.info("目前還沒有任何記錄，請從側邊欄新增您的第一筆帳目！")
 
-    st.divider()
+    # --- Tab 2: 圖表分析 ---
+    with tab2:
+        st.subheader("📊 財務視覺化分析")
+        if not df.empty:
+            df_expense = df[df["類型"] == "支出"]
+            if not df_expense.empty:
+                col1, col2 = st.columns(2)
+                
+                # 定義一組高對比的鮮豔顏色
+                vivid_colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FFBD33', '#33FFF2', '#A833FF']
+                
+                with col1:
+                    # 支出分類圓餅圖
+                    fig_pie = px.pie(
+                        df_expense, 
+                        values='金額', 
+                        names='分類', 
+                        title='各類別支出佔比', 
+                        hole=0.4,
+                        color_discrete_sequence=vivid_colors
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                
+                with col2:
+                    # 每日支出長條圖
+                    df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額'].sum()
+                    fig_bar = px.bar(
+                        df_daily, 
+                        x='日期', 
+                        y='金額', 
+                        color='分類',
+                        title='每日總支出趨勢', 
+                        text_auto=True,
+                        color_discrete_sequence=vivid_colors
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True)
+            else:
+                st.info("目前尚無支出紀錄可產出圖表。")
+        else:
+            st.info("目前尚無資料可產出圖表。")
 
-    # 3. 月曆模式 (獨立放在最下方，確保正常渲染)
-    st.subheader("📅 月曆視圖")
-    if not df.empty:
-        events = []
-        for idx, row in df.iterrows():
-            # 支出用鮮紅色，收入用鮮綠色，增加對比度
-            event_color = "#FF3B30" if row["類型"] == "支出" else "#34C759"
-            events.append({
-                "title": f"{row['分類']} ${row['金額']}",
-                "start": str(row["日期"]),
-                "backgroundColor": event_color,
-                "borderColor": event_color
-            })
-        
-        calendar_options = {
-            "headerToolbar": {
-                "left": "prev,next today",
-                "center": "title",
-                "right": "dayGridMonth,timeGridWeek,timeGridDay"
-            },
-            "initialView": "dayGridMonth"
-        }
-        
-        # 顯示月曆
-        calendar(events=events, options=calendar_options)
-    else:
-        st.info("目前尚無資料可顯示於月曆。")
+    # --- Tab 3: 月曆模式 ---
+    with tab3:
+        st.subheader("📅 月曆視圖")
+        if not df.empty:
+            events = []
+            for idx, row in df.iterrows():
+                # 支出用鮮紅色，收入用鮮綠色，增加對比度
+                event_color = "#FF3B30" if row["類型"] == "支出" else "#34C759"
+                events.append({
+                    "title": f"{row['分類']} ${row['金額']}",
+                    "start": str(row["日期"]),
+                    "backgroundColor": event_color,
+                    "borderColor": event_color
+                })
+            
+            calendar_options = {
+                "headerToolbar": {
+                    "left": "prev,next today",
+                    "center": "title",
+                    "right": "dayGridMonth,timeGridWeek,timeGridDay"
+                },
+                "initialView": "dayGridMonth"
+            }
+            
+            # 顯示月曆
+            calendar(events=events, options=calendar_options)
+        else:
+            st.info("目前尚無資料可顯示於月曆。")
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
