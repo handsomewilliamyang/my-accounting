@@ -39,7 +39,6 @@ if sh:
     # ================= 側邊欄設計 =================
     st.sidebar.header("➕ 新增記帳")
     with st.sidebar.form("add_form"):
-        # 金額預設為空，點擊直接輸入整數
         amount = st.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
         category = st.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "固定支出", "其他支出", "薪資", "其他收入"])
         tx_type = st.radio("類型", ["支出", "收入"])
@@ -62,15 +61,14 @@ if sh:
             st.sidebar.warning("請輸入有效的金額！")
 
     # ================= 主畫面 偽分頁(Radio) 設計 =================
-    # 利用水平排版的 Radio 按鈕來取代 Tabs，解決 Calendar 渲染失敗的 Bug
     view_mode = st.radio(
         "選擇檢視模式：", 
         ["📋 記帳明細列表", "📊 圖表分析", "📅 月曆模式"], 
         horizontal=True,
-        label_visibility="collapsed" # 隱藏標題，讓它看起來更像 Tab 列
+        label_visibility="collapsed"
     )
     
-    st.divider() # 加上一條分隔線增加質感
+    st.divider()
 
     # --- 模式 1: 記帳明細列表 ---
     if view_mode == "📋 記帳明細列表":
@@ -86,18 +84,36 @@ if sh:
                 key="expense_table"
             )
             
-            if st.button("🗑️ 刪除所選項目"):
-                rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
-                if rows_to_delete:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ 刪除所選項目"):
+                    rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
+                    if rows_to_delete:
+                        try:
+                            for row_idx in sorted(rows_to_delete, reverse=True):
+                                worksheet.delete_rows(row_idx + 2)
+                            st.success("已成功刪除選取的項目！")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"刪除失敗：{e}")
+                    else:
+                        st.warning("請先勾選您想要刪除的項目！")
+            
+            with col2:
+                if st.button("💾 儲存修改內容"):
                     try:
-                        for row_idx in sorted(rows_to_delete, reverse=True):
-                            worksheet.delete_rows(row_idx + 2)
-                        st.success("已成功刪除選取的項目！")
+                        save_df = edited_df.drop(columns=["刪除"])
+                        save_df = save_df.fillna("")
+                        new_data = [save_df.columns.values.tolist()] + save_df.values.tolist()
+                        
+                        worksheet.clear()
+                        worksheet.update(range_name="A1", values=new_data)
+                        
+                        st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"刪除失敗：{e}")
-                else:
-                    st.warning("請先勾選您想要刪除的項目！")
+                        st.error(f"儲存失敗：{e}")
         else:
             st.info("目前還沒有任何記錄，請從側邊欄新增您的第一筆帳目！")
 
@@ -109,7 +125,6 @@ if sh:
             if not df_expense.empty:
                 col1, col2 = st.columns(2)
                 
-                # 高對比的鮮豔顏色
                 vivid_colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FFBD33', '#33FFF2', '#A833FF']
                 
                 with col1:
@@ -163,7 +178,6 @@ if sh:
                 "initialView": "dayGridMonth"
             }
             
-            # 因為是獨立渲染，所以月曆絕對不會再消失
             calendar(events=events, options=calendar_options)
         else:
             st.info("目前尚無資料可顯示於月曆。")
