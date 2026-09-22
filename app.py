@@ -14,7 +14,7 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 1. 連線 Google 試算表 (這部分使用 cache_resource，保持長連線)
+# 連線 Google 試算表
 @st.cache_resource
 def get_google_sheet():
     try:
@@ -29,9 +29,8 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# ================= 核心優化：資料快取 (Data Caching) =================
-# 加上 @st.cache_data 後，不管資料有幾萬筆，只要沒新增/修改，都會瞬間從記憶體讀取！
-@st.cache_data(ttl=3600) # 設定一小時自動過期更新一次，確保不會永久卡住
+# 資料快取 (Data Caching) 提升效能
+@st.cache_data(ttl=3600)
 def fetch_data(_sh):
     if _sh:
         try:
@@ -42,7 +41,6 @@ def fetch_data(_sh):
             return pd.DataFrame()
     return pd.DataFrame()
 
-# 讀取快取中的資料
 df = fetch_data(sh)
 
 if sh:
@@ -64,15 +62,15 @@ if sh:
 
     st.divider()
 
-    # ================= 側邊欄設計 =================
-    st.sidebar.header("➕ 新增記帳")
+    # ================= 側邊欄設計：一般新增 =================
+    st.sidebar.header("➕ 一般新增記帳")
     
     amount = st.sidebar.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
-    category = st.sidebar.selectbox("分類", ["每月固定費用", "伙食", "交通", "購物", "娛樂", "其他支出", "薪資", "其他收入"])
+    category = st.sidebar.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出", "薪資", "其他收入"])
     tx_type = st.sidebar.radio("類型", ["支出", "收入"])
     pay_method = st.sidebar.selectbox("付款方式", ["現金", "信用卡"])
     tx_date = st.sidebar.date_input("日期", value=date.today())
-    note = st.sidebar.text_input("備註 (例如：房租、Netflix 訂閱)")
+    note = st.sidebar.text_input("備註 (例如：鮮天下、加油)")
     
     submit_button = st.sidebar.button("送出記帳")
 
@@ -81,9 +79,7 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
-                
-                fetch_data.clear() # <--- 核心關鍵：新增資料後清除快取，強制抓最新版
-                
+                fetch_data.clear() # 清除快取
                 st.sidebar.success("新增成功！")
                 st.rerun()
             except Exception as e:
@@ -91,10 +87,12 @@ if sh:
         else:
             st.sidebar.warning("請輸入有效的金額！")
 
-    # --- 快速記帳（固定薪資循環專區） ---
+    # ================= 側邊欄設計：快速記帳專區 =================
     st.sidebar.divider()
-    st.sidebar.header("⚡ 快速固定收入")
-    with st.sidebar.expander("設定與帶入固定薪資"):
+    st.sidebar.header("⚡ 快速記帳專區")
+    
+    # 快速功能 1：帶入固定薪資
+    with st.sidebar.expander("📥 帶入固定薪資"):
         default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
         
@@ -102,13 +100,29 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                
-                fetch_data.clear() # <--- 清除快取
-                
+                fetch_data.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"薪資入帳失敗: {e}")
+                
+    # 快速功能 2：帶入固定支出
+    with st.sidebar.expander("📤 帶入固定支出"):
+        expense_note = st.text_input("支出項目 (例: 房租/電信費)", value="房租")
+        default_expense = st.number_input("預設支出金額", value=10000, step=500)
+        expense_pay = st.selectbox("付款方式", ["現金", "信用卡"], key="exp_pay")
+        expense_date = st.date_input("扣款日期", value=date.today(), key="exp_date")
+        
+        if st.button("📤 一鍵扣款固定支出"):
+            try:
+                # 分類自動設定為「每月固定費用」，方便你在圖表區追蹤
+                expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
+                worksheet.append_row(expense_row)
+                fetch_data.clear()
+                st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"支出記錄失敗: {e}")
 
     # ================= 主畫面 偽分頁(Radio) 設計 =================
     view_mode = st.radio(
@@ -144,8 +158,7 @@ if sh:
                             for row_idx in sorted(rows_to_delete, reverse=True):
                                 worksheet.delete_rows(row_idx + 2)
                                 
-                            fetch_data.clear() # <--- 清除快取
-                            
+                            fetch_data.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -163,8 +176,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data.clear() # <--- 清除快取
-                        
+                        fetch_data.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
