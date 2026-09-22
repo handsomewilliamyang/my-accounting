@@ -46,7 +46,6 @@ if sh:
         total_income = df[df["類型"] == "收入"]["金額"].sum()
         total_expense = df[df["類型"] == "支出"]["金額"].sum()
 
-    # 僅顯示總收入與總花費兩張指標卡片
     col_m1, col_m2 = st.columns(2)
     with col_m1:
         st.metric(label="📈 總收入", value=f"${total_income:,}")
@@ -78,6 +77,22 @@ if sh:
                 st.sidebar.error(f"寫入失敗: {e}")
         else:
             st.sidebar.warning("請輸入有效的金額！")
+
+    # --- 快速記帳（固定薪資循環專區） ---
+    st.sidebar.divider()
+    st.sidebar.header("⚡ 快速固定收入")
+    with st.sidebar.expander("設定與帶入固定薪資"):
+        default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
+        salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
+        
+        if st.button("📥 一鍵入帳本月薪資"):
+            try:
+                salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
+                worksheet.append_row(salary_row)
+                st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"薪資入帳失敗: {e}")
 
     # ================= 主畫面 偽分頁(Radio) 設計 =================
     view_mode = st.radio(
