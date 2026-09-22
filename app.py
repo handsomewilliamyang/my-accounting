@@ -14,7 +14,7 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 連線 Google 試算表
+# 1. 連線 Google 試算表 (這部分使用 cache_resource，保持長連線)
 @st.cache_resource
 def get_google_sheet():
     try:
@@ -27,15 +27,25 @@ def get_google_sheet():
         return None
 
 sh = get_google_sheet()
+worksheet = sh.get_worksheet(0) if sh else None
+
+# ================= 核心優化：資料快取 (Data Caching) =================
+# 加上 @st.cache_data 後，不管資料有幾萬筆，只要沒新增/修改，都會瞬間從記憶體讀取！
+@st.cache_data(ttl=3600) # 設定一小時自動過期更新一次，確保不會永久卡住
+def fetch_data(_sh):
+    if _sh:
+        try:
+            ws = _sh.get_worksheet(0)
+            data = ws.get_all_records()
+            return pd.DataFrame(data)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+# 讀取快取中的資料
+df = fetch_data(sh)
 
 if sh:
-    try:
-        worksheet = sh.get_worksheet(0) # 取得第一個分頁
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-    except Exception as e:
-        df = pd.DataFrame()
-
     # ================= 計算財務指標 (總收入、總花費) =================
     total_income = 0
     total_expense = 0
@@ -71,6 +81,9 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
+                
+                fetch_data.clear() # <--- 核心關鍵：新增資料後清除快取，強制抓最新版
+                
                 st.sidebar.success("新增成功！")
                 st.rerun()
             except Exception as e:
@@ -89,6 +102,9 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
+                
+                fetch_data.clear() # <--- 清除快取
+                
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -127,6 +143,9 @@ if sh:
                         try:
                             for row_idx in sorted(rows_to_delete, reverse=True):
                                 worksheet.delete_rows(row_idx + 2)
+                                
+                            fetch_data.clear() # <--- 清除快取
+                            
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -143,6 +162,8 @@ if sh:
                         
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
+                        
+                        fetch_data.clear() # <--- 清除快取
                         
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
