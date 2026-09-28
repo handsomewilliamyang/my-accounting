@@ -14,12 +14,29 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 連線 Google 試算表
+# 連線 Google 試算表 (具備防呆與換行自動修復機制)
 @st.cache_resource
 def get_google_sheet():
     try:
-        secret_dict = dict(st.secrets["gcp_service_account"])
-        gc = gspread.service_account_from_dict(secret_dict)
+        # 取得私鑰並自動處理 \n 轉換，確保 PEM 憑證載入 100% 成功
+        raw_key = st.secrets["gcp_service_account"]["private_key"]
+        fixed_key = raw_key.replace("\\n", "\n")
+        
+        creds_dict = {
+            "type": st.secrets["gcp_service_account"]["type"],
+            "project_id": st.secrets["gcp_service_account"]["project_id"],
+            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
+            "private_key": fixed_key,
+            "client_email": st.secrets["gcp_service_account"]["client_email"],
+            "client_id": st.secrets["gcp_service_account"]["client_id"],
+            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
+            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"],
+            "universe_domain": st.secrets["gcp_service_account"].get("universe_domain", "googleapis.com")
+        }
+        
+        gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open_by_url(SPREADSHEET_URL)
         return sh
     except Exception as e:
@@ -115,7 +132,6 @@ if sh:
         
         if st.button("📤 一鍵扣款固定支出"):
             try:
-                # 分類自動設定為「每月固定費用」，方便你在圖表區追蹤
                 expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
                 worksheet.append_row(expense_row)
                 fetch_data.clear()
