@@ -14,7 +14,7 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 連線 Google 試算表 (保留連線快取即可)
+# 連線 Google 試算表
 @st.cache_resource
 def get_google_sheet():
     try:
@@ -43,39 +43,53 @@ def get_google_sheet():
         return None
 
 sh = get_google_sheet()
-worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 核心修改：移除資料快取，改用絕對暴力的 get_all_values 取代 get_all_records
+# 🔥 核心修改：徹底捨棄快取，改用暴力清洗所有字串與空白
 def fetch_data_live(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
         ws = _sh.get_worksheet(0)
-        raw_data = ws.get_all_values() # 抓取最原始的二維陣列，無視任何標題限制
+        raw_data = ws.get_all_values() # 抓取最原始的二維陣列
         
         if len(raw_data) < 2:
             return pd.DataFrame()
             
-        headers = raw_data[0]
-        df_temp = pd.DataFrame(raw_data[1:], columns=headers)
+        # 標題列防呆清理
+        headers = [str(h).strip().replace('\u200b', '') for h in raw_data[0]]
         
-        # 終極防呆：拔除所有可能干擾的隱藏字元
-        df_temp.columns = [str(c).strip().replace('\u200b', '').replace('\n', '').replace('\r', '') for c in df_temp.columns]
+        # 確保資料列長度與標題列一致
+        data_rows = [row + [""] * (len(headers) - len(row)) for row in raw_data[1:]]
+        data_rows = [row[:len(headers)] for row in data_rows]
         
-        # 強制萃取年月
+        df_temp = pd.DataFrame(data_rows, columns=headers)
+        
+        # 🛑 終極空白殺手：強制剷除所有欄位內的空白字元，確保「支出」、「收入」絕對能對上
+        for col in df_temp.columns:
+            df_temp[col] = df_temp[col].astype(str).str.strip()
+            
+        # 最強效日期解析
         if "日期" in df_temp.columns:
-            df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
-            df_temp["年月"] = df_temp["日期"].str.slice(0, 7)
+            # 統一替換斜線為減號
+            clean_dates = df_temp["日期"].str.replace("/", "-")
+            parsed = pd.to_datetime(clean_dates, errors="coerce")
+            df_temp["年月"] = parsed.dt.strftime("%Y-%m")
+            
+            # 若有解析失敗的，強制切片抓取
+            mask = df_temp["年月"].isna()
+            df_temp.loc[mask, "年月"] = clean_dates[mask].str.slice(0, 7)
             
         return df_temp
     except Exception as e:
-        st.error(f"讀取資料發生錯誤：{e}")
+        st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-# 每次都強制抓取最新資料，不被快取綁架
+# 每次重新整理都必定抓取即時資料
 df = fetch_data_live(sh)
+worksheet = sh.get_worksheet(0) if sh else None
 
 if sh:
+    # 確保金額格式正確
     if not df.empty and "金額" in df.columns:
         df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
 
@@ -84,6 +98,7 @@ if sh:
     
     current_month_str = date.today().strftime("%Y-%m")
     
+    # 動態抓取資料庫內真實存在的月份
     if not df.empty and "年月" in df.columns:
         db_months = [m for m in df["年月"].dropna().unique().tolist() if len(str(m)) >= 7]
     else:
@@ -92,6 +107,7 @@ if sh:
     all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
+    # 根據選定的月份過濾資料
     if not df.empty and "年月" in df.columns:
         df_selected = df[df["年月"] == selected_month]
     else:
@@ -115,7 +131,7 @@ if sh:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
                 st.sidebar.success("新增成功！")
-                st.rerun() # 直接重新整理畫面，Live抓取自然更新
+                st.rerun()
             except Exception as e:
                 st.sidebar.error(f"寫入失敗: {e}")
         else:
@@ -130,7 +146,7 @@ if sh:
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
         if st.button("📥 一鍵入帳本月薪資"):
             try:
-                salary_row = [str(salary_date), "收入", "薪薪", default_salary, "現金", "每月固定薪資"]
+                salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
@@ -301,7 +317,7 @@ if sh:
             st.info("此月份尚無資料可顯示於月曆。")
 
     # --- 模式 4: 歷史月份收納區 ---
-    elif view_mode == "🗄️ 歷史月份收納區":
+    elif view_mode == "🗄️️ 歷史月份收納區":
         st.subheader("🗄️ 歷史月份收納與快速查閱")
         
         if not df.empty and "年月" in df.columns:
@@ -321,6 +337,14 @@ if sh:
                     st.dataframe(df_m.drop(columns=["年月"]), use_container_width=True)
         else:
             st.info("目前尚無任何歷史資料。")
+
+    # ================= 🛠️ 終極系統偵錯面板 (放在網頁最底端) =================
+    st.divider()
+    with st.expander("🛠️ 系統偵錯面板 (如果畫面還是空的，請點開截圖給我)"):
+        st.write("Google 連線狀態:", "🟢 成功" if sh else "🔴 失敗")
+        st.write(f"資料庫總共抓取到幾筆資料: {len(df)} 筆")
+        st.write("讀取到的真實欄位名稱:", df.columns.tolist() if not df.empty else "無")
+        st.write("原始資料預覽 (前 15 筆):", df.head(15) if not df.empty else "空資料表")
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
