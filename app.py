@@ -43,53 +43,51 @@ def get_google_sheet():
         return None
 
 sh = get_google_sheet()
+worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 核心修改：徹底捨棄快取，改用暴力清洗所有字串與空白
-def fetch_data_live(_sh):
+# 🔥 終極讀取函數：強制換名 (v5) 躲避舊快取，並暴力剷除所有隱藏空白
+@st.cache_data(ttl=3600)
+def fetch_data_v5(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
         ws = _sh.get_worksheet(0)
-        raw_data = ws.get_all_values() # 抓取最原始的二維陣列
+        raw_data = ws.get_all_values()
         
         if len(raw_data) < 2:
             return pd.DataFrame()
             
-        # 標題列防呆清理
-        headers = [str(h).strip().replace('\u200b', '') for h in raw_data[0]]
+        # 清洗標題列：去掉所有前後空白與隱藏字元
+        headers = [str(h).strip().replace('\u200b', '').replace('\n', '') for h in raw_data[0]]
         
-        # 確保資料列長度與標題列一致
+        # 對齊資料列
         data_rows = [row + [""] * (len(headers) - len(row)) for row in raw_data[1:]]
         data_rows = [row[:len(headers)] for row in data_rows]
         
         df_temp = pd.DataFrame(data_rows, columns=headers)
         
-        # 🛑 終極空白殺手：強制剷除所有欄位內的空白字元，確保「支出」、「收入」絕對能對上
+        # 清洗所有資料的空白字元
         for col in df_temp.columns:
             df_temp[col] = df_temp[col].astype(str).str.strip()
             
-        # 最強效日期解析
+        # 處理日期與年月
         if "日期" in df_temp.columns:
-            # 統一替換斜線為減號
             clean_dates = df_temp["日期"].str.replace("/", "-")
             parsed = pd.to_datetime(clean_dates, errors="coerce")
             df_temp["年月"] = parsed.dt.strftime("%Y-%m")
             
-            # 若有解析失敗的，強制切片抓取
             mask = df_temp["年月"].isna()
-            df_temp.loc[mask, "年月"] = clean_dates[mask].str.slice(0, 7)
-            
+            if mask.any():
+                df_temp.loc[mask, "年月"] = clean_dates[mask].str.slice(0, 7)
+                
         return df_temp
     except Exception as e:
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-# 每次重新整理都必定抓取即時資料
-df = fetch_data_live(sh)
-worksheet = sh.get_worksheet(0) if sh else None
+df = fetch_data_v5(sh)
 
 if sh:
-    # 確保金額格式正確
     if not df.empty and "金額" in df.columns:
         df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
 
@@ -98,7 +96,6 @@ if sh:
     
     current_month_str = date.today().strftime("%Y-%m")
     
-    # 動態抓取資料庫內真實存在的月份
     if not df.empty and "年月" in df.columns:
         db_months = [m for m in df["年月"].dropna().unique().tolist() if len(str(m)) >= 7]
     else:
@@ -107,7 +104,6 @@ if sh:
     all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
-    # 根據選定的月份過濾資料
     if not df.empty and "年月" in df.columns:
         df_selected = df[df["年月"] == selected_month]
     else:
@@ -130,6 +126,7 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
+                fetch_data_v5.clear()
                 st.sidebar.success("新增成功！")
                 st.rerun()
             except Exception as e:
@@ -148,6 +145,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
+                fetch_data_v5.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -162,6 +160,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
                 worksheet.append_row(expense_row)
+                fetch_data_v5.clear()
                 st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -218,6 +217,7 @@ if sh:
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
+                            # 更精準的刪除對位方式
                             for row_idx in sorted(rows_to_delete, reverse=True):
                                 target_row = df_selected.iloc[row_idx]
                                 original_index = df.index[(df["日期"] == target_row["日期"]) & 
@@ -226,6 +226,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
+                            fetch_data_v5.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -245,6 +246,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
+                        fetch_data_v5.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -317,7 +319,7 @@ if sh:
             st.info("此月份尚無資料可顯示於月曆。")
 
     # --- 模式 4: 歷史月份收納區 ---
-    elif view_mode == "🗄️️ 歷史月份收納區":
+    elif view_mode == "🗄️ 歷史月份收納區":
         st.subheader("🗄️ 歷史月份收納與快速查閱")
         
         if not df.empty and "年月" in df.columns:
@@ -337,14 +339,6 @@ if sh:
                     st.dataframe(df_m.drop(columns=["年月"]), use_container_width=True)
         else:
             st.info("目前尚無任何歷史資料。")
-
-    # ================= 🛠️ 終極系統偵錯面板 (放在網頁最底端) =================
-    st.divider()
-    with st.expander("🛠️ 系統偵錯面板 (如果畫面還是空的，請點開截圖給我)"):
-        st.write("Google 連線狀態:", "🟢 成功" if sh else "🔴 失敗")
-        st.write(f"資料庫總共抓取到幾筆資料: {len(df)} 筆")
-        st.write("讀取到的真實欄位名稱:", df.columns.tolist() if not df.empty else "無")
-        st.write("原始資料預覽 (前 15 筆):", df.head(15) if not df.empty else "空資料表")
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
