@@ -14,7 +14,7 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 連線 Google 試算表 (具備防呆與換行自動修復機制)
+# 連線 Google 試算表
 @st.cache_resource
 def get_google_sheet():
     try:
@@ -45,9 +45,9 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 資料快取 (Data Caching) 提升效能 (最強健的日期與年月解析防呆版)
+# 🔥 關鍵修改：將函數名稱改為 fetch_data_v3，藉此「強制躲過」之前的壞快取！
 @st.cache_data(ttl=3600)
-def fetch_data(_sh):
+def fetch_data_v3(_sh):
     if _sh:
         try:
             ws = _sh.get_worksheet(0)
@@ -55,20 +55,26 @@ def fetch_data(_sh):
             df_temp = pd.DataFrame(data)
             
             if not df_temp.empty:
-                df_temp.columns = df_temp.columns.astype(str).str.strip()
+                # 暴力清洗欄位名稱：去空白、去隱藏字元
+                df_temp.columns = [str(c).strip().replace('\u200b', '') for c in df_temp.columns]
                 
-                # 直接用最穩健的字串切片抓取前 7 個字元作為「年月」 (例如 "2026-09-15" -> "2026-09")
+                # 最強效日期解析：強制轉型並取出年月
                 if "日期" in df_temp.columns:
-                    df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
-                    df_temp["年月"] = df_temp["日期"].str.slice(0, 7)
+                    parsed_dates = pd.to_datetime(df_temp["日期"], errors="coerce")
+                    df_temp["年月"] = parsed_dates.dt.strftime("%Y-%m")
                     
+                    # 若遇到奇葩格式導致解析失敗，補上字串前7碼
+                    mask = df_temp["年月"].isna()
+                    if mask.any():
+                        df_temp.loc[mask, "年月"] = df_temp.loc[mask, "日期"].astype(str).str.slice(0, 7)
             return df_temp
         except Exception as e:
             st.error(f"讀取資料發生錯誤：{e}")
             return pd.DataFrame()
     return pd.DataFrame()
 
-df = fetch_data(sh)
+# 呼叫新的抓取函數
+df = fetch_data_v3(sh)
 
 if sh:
     # 確保金額格式正確
@@ -85,8 +91,7 @@ if sh:
     else:
         db_months = []
         
-    # 合併資料庫裡的年月、當前月份與 2026-09
-    forced_months = list(set(db_months + [current_month_str, "2026-09"]))
+    forced_months = list(set(db_months + [current_month_str]))
     all_months = sorted([m for m in forced_months if isinstance(m, str) and len(m) >= 7], reverse=True)
     
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
@@ -114,7 +119,7 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
-                fetch_data.clear()
+                fetch_data_v3.clear() # 清除新的快取
                 st.sidebar.success("新增成功！")
                 st.rerun()
             except Exception as e:
@@ -133,7 +138,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data.clear()
+                fetch_data_v3.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -148,7 +153,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data.clear()
+                fetch_data_v3.clear()
                 st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -182,7 +187,7 @@ if sh:
     
     st.divider()
 
-    # --- 模式 1: 記帳明細列表 (針對選定月份) ---
+    # --- 模式 1: 記帳明細列表 ---
     if view_mode == "📋 記帳明細列表":
         st.subheader(f"📋 {selected_month} 記帳明細列表")
         if not df_selected.empty:
@@ -213,7 +218,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data.clear()
+                            fetch_data_v3.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -233,7 +238,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data.clear()
+                        fetch_data_v3.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -305,14 +310,12 @@ if sh:
         else:
             st.info("此月份尚無資料可顯示於月曆。")
 
-    # --- 模式 4: 歷史月份收納區 (隨時可查看的縮合模式) ---
+    # --- 模式 4: 歷史月份收納區 ---
     elif view_mode == "🗄️ 歷史月份收納區":
         st.subheader("🗄️ 歷史月份收納與快速查閱")
-        st.markdown("這裡自動將各月份的資料收納為摺疊清單，點擊即可隨時展開查看詳細紀錄與總結：")
         
         if not df.empty and "年月" in df.columns:
             sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
-            
             for m in sorted_months:
                 df_m = df[df["年月"] == m]
                 m_income = df_m[df_m["類型"] == "收入"]["金額"].sum()
@@ -324,8 +327,6 @@ if sh:
                     col_ex1.metric("總收入", f"${m_income:,}")
                     col_ex2.metric("總支出", f"${m_expense:,}")
                     col_ex3.metric("月結餘", f"${net_amount:,}")
-                    
-                    st.markdown(f"**{m} 詳細明細紀錄：**")
                     st.dataframe(df_m.drop(columns=["年月"]), use_container_width=True)
         else:
             st.info("目前尚無任何歷史資料。")
