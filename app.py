@@ -57,16 +57,11 @@ def fetch_data(_sh):
             if not df_temp.empty:
                 df_temp.columns = df_temp.columns.astype(str).str.strip()
                 
-                # 強制轉換日期格式，確保絕對能萃取出「年月」
+                # 直接用最穩健的字串切片抓取前 7 個字元作為「年月」 (例如 "2026-09-15" -> "2026-09")
                 if "日期" in df_temp.columns:
-                    # 利用 pd.to_datetime 自動適應各種奇奇怪怪的日期格式 (斜線、點、橫線等)
-                    parsed_dates = pd.to_datetime(df_temp["日期"], errors="coerce")
-                    # 如果成功解析，轉成 YYYY-MM 格式；如果失敗則退回原字串前 7 個字元
-                    df_temp["年月"] = parsed_dates.dt.strftime("%Y-%m")
-                    # 針對解析失敗的空值，用字串直接切片補救
-                    mask_NaT = df_temp["年月"].isna()
-                    if mask_NaT.any():
-                        df_temp.loc[mask_NaT, "年月"] = df_temp.loc[mask_NaT, "日期"].astype(str).str.slice(0, 7)
+                    df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
+                    df_temp["年月"] = df_temp["日期"].str.slice(0, 7)
+                    
             return df_temp
         except Exception as e:
             st.error(f"讀取資料發生錯誤：{e}")
@@ -83,14 +78,14 @@ if sh:
     # ================= 側邊欄：月份篩選與一般新增 =================
     st.sidebar.header("📅 月份篩選")
     
-    current_month_str = date.today().strftime("%Y-%m") # 2026-10 (或當前系統月)
+    current_month_str = date.today().strftime("%Y-%m")
     
     if not df.empty and "年月" in df.columns:
         db_months = df["年月"].dropna().unique().tolist()
     else:
         db_months = []
         
-    # 強制把資料庫月份與當前月份、以及使用者試算表裡常出現的 2026-09 納入清單
+    # 合併資料庫裡的年月、當前月份與 2026-09
     forced_months = list(set(db_months + [current_month_str, "2026-09"]))
     all_months = sorted([m for m in forced_months if isinstance(m, str) and len(m) >= 7], reverse=True)
     
@@ -119,7 +114,7 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
-                fetch_data.clear() # 清除快取
+                fetch_data.clear()
                 st.sidebar.success("新增成功！")
                 st.rerun()
             except Exception as e:
