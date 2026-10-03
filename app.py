@@ -45,7 +45,7 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 資料快取 (Data Caching) 提升效能 (含欄位防呆)
+# 資料快取 (Data Caching) 提升效能 (強化日期與年月解析防呆版)
 @st.cache_data(ttl=3600)
 def fetch_data(_sh):
     if _sh:
@@ -56,11 +56,12 @@ def fetch_data(_sh):
             
             if not df_temp.empty:
                 df_temp.columns = df_temp.columns.astype(str).str.strip()
-                # 確保日期欄位為字串，並萃取出「年-月 (YYYY-MM)」方便後續按月分組
+                
+                # 強制確保日期欄位存在並透過字串切片安全建立「年月」欄位
                 if "日期" in df_temp.columns:
-                    df_temp["日期"] = pd.to_datetime(df_temp["日期"], errors="coerce").dt.date
-                    df_temp = df_temp.dropna(subset=["日期"]) # 過濾掉格式錯誤的日期
-                    df_temp["年月"] = df_temp["日期"].astype(str).str.slice(0, 7)
+                    df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
+                    date_series = df_temp["日期"].str.slice(0, 10)
+                    df_temp["年月"] = date_series.str.slice(0, 7)
                     
             return df_temp
         except Exception as e:
@@ -75,10 +76,10 @@ if sh:
     if not df.empty and "金額" in df.columns:
         df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
 
-    # ================= 側邊欄：月份切換與一般新增 =================
+    # ================= 側邊欄：月份篩選與一般新增 =================
     st.sidebar.header("📅 月份篩選")
     
-    # 自動抓取資料庫中出現過的所有月份（例如 "2026-09", "2026-08"）
+    # 自動抓取資料庫中出現過的所有月份（例如 "2026-09", "2026-10"）
     if not df.empty and "年月" in df.columns:
         all_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
     else:
@@ -176,7 +177,7 @@ if sh:
     # ================= 主畫面 偽分頁(Radio) 設計 =================
     view_mode = st.radio(
         "選擇檢視模式：", 
-        ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式", "🗄️️ 歷史月份收納區"], 
+        ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式", "🗄️ 歷史月份收納區"], 
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -206,10 +207,8 @@ if sh:
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
-                            # 找出對應到原始大表 df 中的絕對列數進行刪除
                             for row_idx in sorted(rows_to_delete, reverse=True):
                                 target_row = df_selected.iloc[row_idx]
-                                # 比對原始 df 找到真實列號 (Row index 在 Google Sheet 中從 row 2 開始，所以要 +2)
                                 original_index = df.index[(df["日期"] == target_row["日期"]) & 
                                                           (df["金額"] == target_row["金額"]) & 
                                                           (df["備註"] == target_row["備註"])].tolist()
@@ -229,7 +228,6 @@ if sh:
                     try:
                         save_df = edited_df.drop(columns=["刪除"])
                         save_df = save_df.fillna("")
-                        # 將未選取的其他月份資料與編輯後的當月資料合併存回
                         other_df = df[df["年月"] != selected_month].drop(columns=["年月"])
                         final_save_df = pd.concat([other_df, save_df], ignore_index=True)
                         
@@ -312,10 +310,9 @@ if sh:
     # --- 模式 4: 歷史月份收納區 (隨時可查看的縮合模式) ---
     elif view_mode == "🗄️ 歷史月份收納區":
         st.subheader("🗄️ 歷史月份收納與快速查閱")
-        st.markdown("這裡幫你把所有歷史月份的資料自動收納摺疊，點擊各月份即可隨時展開查看詳細紀錄與總收支！")
+        st.markdown("這裡自動將各月份的資料收納為摺疊清單，點擊即可隨時展開查看詳細紀錄與總結：")
         
         if not df.empty and "年月" in df.columns:
-            # 依據年月反向排序（最新的月份排在前面）
             sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
             
             for m in sorted_months:
@@ -324,7 +321,6 @@ if sh:
                 m_expense = df_m[df_m["類型"] == "支出"]["金額"].sum()
                 net_amount = m_income - m_expense
                 
-                # 用 st.expander 建立縮小、可隨時點開查看的折疊區塊
                 with st.expander(f"📂 點擊展開：{m} 月份報表 (收入: ${m_income:,} | 支出: ${m_expense:,} | 結餘: ${net_amount:,})"):
                     col_ex1, col_ex2, col_ex3 = st.columns(3)
                     col_ex1.metric("總收入", f"${m_income:,}")
