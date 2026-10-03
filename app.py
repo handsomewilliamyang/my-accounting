@@ -45,7 +45,7 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 資料快取 (Data Caching) 提升效能 (強化日期與年月解析防呆版)
+# 資料快取 (Data Caching) 提升效能 (最強健的日期與年月解析防呆版)
 @st.cache_data(ttl=3600)
 def fetch_data(_sh):
     if _sh:
@@ -57,12 +57,16 @@ def fetch_data(_sh):
             if not df_temp.empty:
                 df_temp.columns = df_temp.columns.astype(str).str.strip()
                 
-                # 強制確保日期欄位存在並透過字串切片安全建立「年月」欄位
+                # 強制轉換日期格式，確保絕對能萃取出「年月」
                 if "日期" in df_temp.columns:
-                    df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
-                    date_series = df_temp["日期"].str.slice(0, 10)
-                    df_temp["年月"] = date_series.str.slice(0, 7)
-                    
+                    # 利用 pd.to_datetime 自動適應各種奇奇怪怪的日期格式 (斜線、點、橫線等)
+                    parsed_dates = pd.to_datetime(df_temp["日期"], errors="coerce")
+                    # 如果成功解析，轉成 YYYY-MM 格式；如果失敗則退回原字串前 7 個字元
+                    df_temp["年月"] = parsed_dates.dt.strftime("%Y-%m")
+                    # 針對解析失敗的空值，用字串直接切片補救
+                    mask_NaT = df_temp["年月"].isna()
+                    if mask_NaT.any():
+                        df_temp.loc[mask_NaT, "年月"] = df_temp.loc[mask_NaT, "日期"].astype(str).str.slice(0, 7)
             return df_temp
         except Exception as e:
             st.error(f"讀取資料發生錯誤：{e}")
@@ -79,16 +83,16 @@ if sh:
     # ================= 側邊欄：月份篩選與一般新增 =================
     st.sidebar.header("📅 月份篩選")
     
-    # 建立月份清單：結合資料庫所有的年月 + 確保當前系統月份絕對存在
-    current_month_str = date.today().strftime("%Y-%m")
+    current_month_str = date.today().strftime("%Y-%m") # 2026-10 (或當前系統月)
     
     if not df.empty and "年月" in df.columns:
         db_months = df["年月"].dropna().unique().tolist()
     else:
         db_months = []
         
-    # 合併並排序（確保當月與所有歷史月份不遺漏，降冪排列最新在前）
-    all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
+    # 強制把資料庫月份與當前月份、以及使用者試算表裡常出現的 2026-09 納入清單
+    forced_months = list(set(db_months + [current_month_str, "2026-09"]))
+    all_months = sorted([m for m in forced_months if isinstance(m, str) and len(m) >= 7], reverse=True)
     
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
@@ -202,7 +206,7 @@ if sh:
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("🗑️️ 刪除所選項目"):
+                if st.button("🗑️ 刪除所選項目"):
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
