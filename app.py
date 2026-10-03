@@ -14,7 +14,7 @@ st.markdown("一天一塊錢 七天就有七塊錢")
 # Google 試算表網址
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
 
-# 連線 Google 試算表
+# 連線 Google 試算表 (保留連線快取即可)
 @st.cache_resource
 def get_google_sheet():
     try:
@@ -45,39 +45,37 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 關鍵修改：將函數名稱改為 fetch_data_v3，藉此「強制躲過」之前的壞快取！
-@st.cache_data(ttl=3600)
-def fetch_data_v3(_sh):
-    if _sh:
-        try:
-            ws = _sh.get_worksheet(0)
-            data = ws.get_all_records()
-            df_temp = pd.DataFrame(data)
-            
-            if not df_temp.empty:
-                # 暴力清洗欄位名稱：去空白、去隱藏字元
-                df_temp.columns = [str(c).strip().replace('\u200b', '') for c in df_temp.columns]
-                
-                # 最強效日期解析：強制轉型並取出年月
-                if "日期" in df_temp.columns:
-                    parsed_dates = pd.to_datetime(df_temp["日期"], errors="coerce")
-                    df_temp["年月"] = parsed_dates.dt.strftime("%Y-%m")
-                    
-                    # 若遇到奇葩格式導致解析失敗，補上字串前7碼
-                    mask = df_temp["年月"].isna()
-                    if mask.any():
-                        df_temp.loc[mask, "年月"] = df_temp.loc[mask, "日期"].astype(str).str.slice(0, 7)
-            return df_temp
-        except Exception as e:
-            st.error(f"讀取資料發生錯誤：{e}")
+# 🔥 核心修改：移除資料快取，改用絕對暴力的 get_all_values 取代 get_all_records
+def fetch_data_live(_sh):
+    if not _sh:
+        return pd.DataFrame()
+    try:
+        ws = _sh.get_worksheet(0)
+        raw_data = ws.get_all_values() # 抓取最原始的二維陣列，無視任何標題限制
+        
+        if len(raw_data) < 2:
             return pd.DataFrame()
-    return pd.DataFrame()
+            
+        headers = raw_data[0]
+        df_temp = pd.DataFrame(raw_data[1:], columns=headers)
+        
+        # 終極防呆：拔除所有可能干擾的隱藏字元
+        df_temp.columns = [str(c).strip().replace('\u200b', '').replace('\n', '').replace('\r', '') for c in df_temp.columns]
+        
+        # 強制萃取年月
+        if "日期" in df_temp.columns:
+            df_temp["日期"] = df_temp["日期"].astype(str).str.strip()
+            df_temp["年月"] = df_temp["日期"].str.slice(0, 7)
+            
+        return df_temp
+    except Exception as e:
+        st.error(f"讀取資料發生錯誤：{e}")
+        return pd.DataFrame()
 
-# 呼叫新的抓取函數
-df = fetch_data_v3(sh)
+# 每次都強制抓取最新資料，不被快取綁架
+df = fetch_data_live(sh)
 
 if sh:
-    # 確保金額格式正確
     if not df.empty and "金額" in df.columns:
         df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
 
@@ -87,16 +85,13 @@ if sh:
     current_month_str = date.today().strftime("%Y-%m")
     
     if not df.empty and "年月" in df.columns:
-        db_months = df["年月"].dropna().unique().tolist()
+        db_months = [m for m in df["年月"].dropna().unique().tolist() if len(str(m)) >= 7]
     else:
         db_months = []
         
-    forced_months = list(set(db_months + [current_month_str]))
-    all_months = sorted([m for m in forced_months if isinstance(m, str) and len(m) >= 7], reverse=True)
-    
+    all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
-    # 根據選定的月份過濾資料
     if not df.empty and "年月" in df.columns:
         df_selected = df[df["年月"] == selected_month]
     else:
@@ -119,9 +114,8 @@ if sh:
             try:
                 row = [str(tx_date), tx_type, category, amount, pay_method, note]
                 worksheet.append_row(row)
-                fetch_data_v3.clear() # 清除新的快取
                 st.sidebar.success("新增成功！")
-                st.rerun()
+                st.rerun() # 直接重新整理畫面，Live抓取自然更新
             except Exception as e:
                 st.sidebar.error(f"寫入失敗: {e}")
         else:
@@ -136,9 +130,8 @@ if sh:
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
         if st.button("📥 一鍵入帳本月薪資"):
             try:
-                salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
+                salary_row = [str(salary_date), "收入", "薪薪", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v3.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -153,7 +146,6 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v3.clear()
                 st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -218,7 +210,6 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v3.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -238,7 +229,6 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v3.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -317,6 +307,7 @@ if sh:
         if not df.empty and "年月" in df.columns:
             sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
             for m in sorted_months:
+                if len(str(m)) < 7: continue
                 df_m = df[df["年月"] == m]
                 m_income = df_m[df_m["類型"] == "收入"]["金額"].sum()
                 m_expense = df_m[df_m["類型"] == "支出"]["金額"].sum()
