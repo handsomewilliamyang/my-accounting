@@ -79,18 +79,17 @@ if sh:
     # ================= 側邊欄：月份篩選與一般新增 =================
     st.sidebar.header("📅 月份篩選")
     
-    # 自動抓取資料庫中出現過的所有月份（例如 "2026-09", "2026-10"）
-    if not df.empty and "年月" in df.columns:
-        all_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
-    else:
-        all_months = []
-        
+    # 建立月份清單：結合資料庫所有的年月 + 確保當前系統月份絕對存在
     current_month_str = date.today().strftime("%Y-%m")
     
-    # 如果當月不在清單裡，就把當月加進去
-    if current_month_str not in all_months:
-        all_months.insert(0, current_month_str)
+    if not df.empty and "年月" in df.columns:
+        db_months = df["年月"].dropna().unique().tolist()
+    else:
+        db_months = []
         
+    # 合併並排序（確保當月與所有歷史月份不遺漏，降冪排列最新在前）
+    all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
+    
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
     # 根據選定的月份過濾資料
@@ -203,7 +202,7 @@ if sh:
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("🗑️ 刪除所選項目"):
+                if st.button("🗑️️ 刪除所選項目"):
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
