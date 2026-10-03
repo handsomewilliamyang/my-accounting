@@ -45,7 +45,7 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 終極讀取函數：強制換名 (v5) 躲避舊快取，並暴力剷除所有隱藏空白
+# 🔥 終極讀取函數：強制換名躲避舊快取，並暴力剷除所有隱藏空白
 @st.cache_data(ttl=3600)
 def fetch_data_v5(_sh):
     if not _sh:
@@ -91,7 +91,7 @@ if sh:
     if not df.empty and "金額" in df.columns:
         df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
 
-    # ================= 側邊欄：月份篩選與一般新增 =================
+    # ================= 側邊欄：月份篩選 =================
     st.sidebar.header("📅 月份篩選")
     
     current_month_str = date.today().strftime("%Y-%m")
@@ -110,35 +110,37 @@ if sh:
         df_selected = pd.DataFrame()
 
     st.sidebar.divider()
-    st.sidebar.header("➕ 一般新增記帳")
     
-    amount = st.sidebar.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
-    category = st.sidebar.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出", "薪資", "其他收入"])
-    tx_type = st.sidebar.radio("類型", ["支出", "收入"])
-    pay_method = st.sidebar.selectbox("付款方式", ["現金", "信用卡"])
-    tx_date = st.sidebar.date_input("日期", value=date.today())
-    note = st.sidebar.text_input("備註 (例如：鮮天下、加油)")
+    # ================= 側邊欄：整合式新增記帳 (Tabs) =================
+    st.sidebar.header("➕ 新增記帳")
     
-    submit_button = st.sidebar.button("送出記帳")
+    # 建立三個分頁標籤，把落落長的欄位收納起來
+    tab_general, tab_salary, tab_fixed = st.sidebar.tabs(["一般", "💰薪資", "🏠固定支出"])
+    
+    # 1. 一般記帳區
+    with tab_general:
+        amount = st.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
+        category = st.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出", "薪資", "其他收入"])
+        tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
+        pay_method = st.selectbox("付款方式", ["現金", "信用卡"])
+        tx_date = st.date_input("日期", value=date.today())
+        note = st.text_input("備註 (例如：鮮天下、加油)")
+        
+        if st.button("送出一般記帳"):
+            if amount is not None and amount > 0:
+                try:
+                    row = [str(tx_date), tx_type, category, amount, pay_method, note]
+                    worksheet.append_row(row)
+                    fetch_data_v5.clear()
+                    st.success("一般記帳新增成功！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"寫入失敗: {e}")
+            else:
+                st.warning("請輸入有效的金額！")
 
-    if submit_button:
-        if amount is not None and amount > 0:
-            try:
-                row = [str(tx_date), tx_type, category, amount, pay_method, note]
-                worksheet.append_row(row)
-                fetch_data_v5.clear()
-                st.sidebar.success("新增成功！")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"寫入失敗: {e}")
-        else:
-            st.sidebar.warning("請輸入有效的金額！")
-
-    # ================= 側邊欄設計：快速記帳專區 =================
-    st.sidebar.divider()
-    st.sidebar.header("⚡ 快速記帳專區")
-    
-    with st.sidebar.expander("📥 帶入固定薪資"):
+    # 2. 快速帶入固定薪資區
+    with tab_salary:
         default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
         if st.button("📥 一鍵入帳本月薪資"):
@@ -146,12 +148,13 @@ if sh:
                 salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
                 fetch_data_v5.clear()
-                st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
+                st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
-                st.sidebar.error(f"薪資入帳失敗: {e}")
+                st.error(f"薪資入帳失敗: {e}")
                 
-    with st.sidebar.expander("📤 帶入固定支出"):
+    # 3. 快速帶入固定支出區
+    with tab_fixed:
         expense_note = st.text_input("支出項目 (例: 房租/電信費)", value="房租")
         default_expense = st.number_input("預設支出金額", value=10000, step=500)
         expense_pay = st.selectbox("付款方式", ["現金", "信用卡"], key="exp_pay")
@@ -161,10 +164,10 @@ if sh:
                 expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
                 worksheet.append_row(expense_row)
                 fetch_data_v5.clear()
-                st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
+                st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
-                st.sidebar.error(f"支出記錄失敗: {e}")
+                st.error(f"支出記錄失敗: {e}")
 
     # ================= 主畫面：針對「選定月份」計算收支 =================
     st.subheader(f"📅 目前檢視月份：{selected_month}")
