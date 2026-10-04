@@ -8,6 +8,16 @@ from streamlit_calendar import calendar
 # 網頁標題與基本設定
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
+# 🔥 額外加入 CSS 樣式，讓表格欄位可以強制變窄、留更多空間給備註
+st.markdown("""
+<style>
+    /* 調整資料編輯器內各欄位的最小寬度，讓短欄位更緊湊 */
+    div[data-testid="stDataEditor"] th:nth-child(2), div[data-testid="stDataEditor"] td:nth-child(2) { max-width: 110px !important; } /* 日期 */
+    div[data-testid="stDataEditor"] th:nth-child(3), div[data-testid="stDataEditor"] td:nth-child(3) { max-width: 70px !important; }  /* 類型 */
+    div[data-testid="stDataEditor"] th:nth-child(4), div[data-testid="stDataEditor"] td:nth-child(4) { max-width: 90px !important; }  /* 分類 */
+</style>
+""", unsafe_allow_html=True)
+
 st.title("💰 我是有錢人")
 st.markdown("一天一塊錢 七天就有七塊錢")
 
@@ -47,7 +57,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 讀取函數：強效清洗與年月解析
 @st.cache_data(ttl=3600)
-def fetch_data_v7(_sh):
+def fetch_data_v8(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -80,7 +90,7 @@ def fetch_data_v7(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v7(sh)
+df = fetch_data_v8(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -126,7 +136,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v7.clear()
+                    fetch_data_v8.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -141,7 +151,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v7.clear()
+                fetch_data_v8.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -156,7 +166,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v7.clear()
+                fetch_data_v8.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -202,7 +212,7 @@ if sh:
                 
             df_display.insert(0, "刪除", False)
             
-            # 🔥 欄位寬度與對齊調整 (讓備註寬，其餘欄位縮短)
+            # 欄位寬度設定
             edited_df = st.data_editor(
                 df_display, 
                 use_container_width=True,
@@ -210,12 +220,12 @@ if sh:
                 key="expense_table",
                 column_config={
                     "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
-                    "日期": st.column_config.TextColumn("日期", width="medium"),
+                    "日期": st.column_config.TextColumn("日期", width="small"),
                     "類型": st.column_config.TextColumn("類型", width="small"),
-                    "分類": st.column_config.TextColumn("分類", width="medium"),
+                    "分類": st.column_config.TextColumn("分類", width="small"),
                     "金額": st.column_config.TextColumn("金額", width="small"),
                     "付款方式": st.column_config.TextColumn("付款方式", width="small"),
-                    "備註": st.column_config.TextColumn("備註", width="large") # 備註設定為寬版
+                    "備註": st.column_config.TextColumn("備註", width="large")
                 }
             )
             
@@ -234,7 +244,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v7.clear()
+                            fetch_data_v8.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -254,7 +264,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v7.clear()
+                        fetch_data_v8.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -348,7 +358,7 @@ if sh:
                     df_m_display = df_m.drop(columns=["年月", "金額_num"])
                     st.dataframe(df_m_display, use_container_width=True)
         else:
-            st.info("目前尚無任何歷史資料。")
+            st.info("目前尚無None的歷史資料。")
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
