@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v26(_sh):
+def fetch_data_v27(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -152,7 +152,7 @@ def fetch_data_v26(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v26(sh)
+df = fetch_data_v27(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -181,7 +181,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v26.clear()
+                    fetch_data_v27.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +196,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v26.clear()
+                fetch_data_v27.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +223,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v26.clear()
+                fetch_data_v27.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -255,7 +255,7 @@ if sh:
                     except Exception as e:
                         st.sidebar.error(f"儲存失敗: {e}")
 
-    # ================= 主畫面上方：完美整合月份篩選器與歷史收納區 =================
+    # ================= 主畫面上方：月份篩選器 =================
     current_month_str = date.today().strftime("%Y-%m")
     
     if not df.empty and "年月" in df.columns:
@@ -265,28 +265,7 @@ if sh:
         
     all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
     
-    top_col1, top_col2 = st.columns([1, 1])
-    
-    with top_col1:
-        selected_month = st.selectbox("📅 選擇要檢視的月份", all_months, index=0)
-    
-    with top_col2:
-        with st.expander("🗄️ 歷史月份收納區 (點擊展開)"):
-            if not df.empty and "年月" in df.columns:
-                sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
-                for m in sorted_months:
-                    if len(str(m)) < 7: continue
-                    df_m = df[df["年月"] == m]
-                    m_income = df_m[df_m["類型"] == "收入"]["金額_num"].sum()
-                    m_expense = df_m[df_m["類型"] == "支出"]["金額_num"].sum()
-                    net_amount = m_income - m_expense
-                    
-                    with st.expander(f"📂 {m} 結餘: ${int(net_amount):,}"):
-                        st.write(f"收入: ${int(m_income):,}")
-                        st.write(f"支出: ${int(m_expense):,}")
-                        st.dataframe(df_m.drop(columns=["年月", "金額_num"]), use_container_width=True)
-            else:
-                st.info("目前尚無歷史資料。")
+    selected_month = st.selectbox("📅 選擇要檢視的月份", all_months, index=0)
 
     if not df.empty and "年月" in df.columns:
         df_selected = df[df["年月"] == selected_month]
@@ -366,7 +345,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v26.clear()
+                            fetch_data_v27.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -386,7 +365,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v26.clear()
+                        fetch_data_v27.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
