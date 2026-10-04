@@ -45,9 +45,9 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 讀取函數：強效清洗與年月解析
+# 讀取函數：強效清洗與年月解析
 @st.cache_data(ttl=3600)
-def fetch_data_v6(_sh):
+def fetch_data_v7(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -80,10 +80,9 @@ def fetch_data_v6(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v6(sh)
+df = fetch_data_v7(sh)
 
 if sh:
-    # 確保金額格式正確（用於後端數值計算加總）
     if not df.empty and "金額" in df.columns:
         df["金額_num"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
     else:
@@ -127,7 +126,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v6.clear()
+                    fetch_data_v7.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -142,7 +141,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v6.clear()
+                fetch_data_v7.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -157,7 +156,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v6.clear()
+                fetch_data_v7.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -203,24 +202,27 @@ if sh:
                 
             df_display.insert(0, "刪除", False)
             
-            # 🔥 關鍵修改：使用 TextColumn 將金額欄位強制靠左對齊顯示
+            # 🔥 欄位寬度與對齊調整 (讓備註寬，其餘欄位縮短)
             edited_df = st.data_editor(
                 df_display, 
                 use_container_width=True,
                 hide_index=True,
                 key="expense_table",
                 column_config={
-                    "金額": st.column_config.TextColumn(
-                        "金額",
-                        help="點擊可直接修改金額"
-                    )
+                    "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
+                    "日期": st.column_config.TextColumn("日期", width="medium"),
+                    "類型": st.column_config.TextColumn("類型", width="small"),
+                    "分類": st.column_config.TextColumn("分類", width="medium"),
+                    "金額": st.column_config.TextColumn("金額", width="small"),
+                    "付款方式": st.column_config.TextColumn("付款方式", width="small"),
+                    "備註": st.column_config.TextColumn("備註", width="large") # 備註設定為寬版
                 }
             )
             
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("🗑️️ 刪除所選項目"):
+                if st.button("🗑️ 刪除所選項目"):
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
@@ -232,7 +234,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v6.clear()
+                            fetch_data_v7.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -252,7 +254,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v6.clear()
+                        fetch_data_v7.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
