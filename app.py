@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 import calendar as py_calendar
 import plotly.express as px
 
 # 網頁標題與基本設定
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
-# 精準 CSS 欄位寬度調整
+# 🔥 針對明細表格與原生日曆的自訂 CSS 樣式
 st.markdown("""
 <style>
+    /* 記帳明細表格各欄位寬度 */
     div[data-testid="stDataEditor"] th:nth-child(1), div[data-testid="stDataEditor"] td:nth-child(1) { width: 50px !important; min-width: 50px !important; }   /* 刪除 */
     div[data-testid="stDataEditor"] th:nth-child(2), div[data-testid="stDataEditor"] td:nth-child(2) { width: 110px !important; min-width: 110px !important; } /* 日期 */
     div[data-testid="stDataEditor"] th:nth-child(3), div[data-testid="stDataEditor"] td:nth-child(3) { width: 70px !important; min-width: 70px !important; }   /* 類型 */
@@ -18,6 +19,24 @@ st.markdown("""
     div[data-testid="stDataEditor"] th:nth-child(5), div[data-testid="stDataEditor"] td:nth-child(5) { width: 80px !important; min-width: 80px !important; }   /* 金額 */
     div[data-testid="stDataEditor"] th:nth-child(6), div[data-testid="stDataEditor"] td:nth-child(6) { width: 100px !important; min-width: 100px !important; } /* 付款方式 */
     div[data-testid="stDataEditor"] th:nth-child(7), div[data-testid="stDataEditor"] td:nth-child(7) { width: auto !important; min-width: 250px !important; }  /* 備註 */
+
+    /* 日曆模式專屬卡片樣式：增加深色背景與邊框，讓字體放大清晰 */
+    .cal-card {
+        background-color: #1e1e24;
+        border: 1px solid #33333d;
+        border-radius: 8px;
+        padding: 10px;
+        min-height: 120px;
+        margin-bottom: 10px;
+    }
+    .cal-day-header {
+        font-size: 16px;
+        font-weight: bold;
+        color: #ffffff;
+        margin-bottom: 6px;
+        border-bottom: 1px solid #444;
+        padding-bottom: 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,7 +79,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 資料讀取函數
 @st.cache_data(ttl=3600)
-def fetch_data_v12(_sh):
+def fetch_data_v13(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -93,7 +112,7 @@ def fetch_data_v12(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v12(sh)
+df = fetch_data_v13(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -142,7 +161,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v12.clear()
+                    fetch_data_v13.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -157,7 +176,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v12.clear()
+                fetch_data_v13.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -172,7 +191,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v12.clear()
+                fetch_data_v13.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -249,7 +268,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v12.clear()
+                            fetch_data_v13.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -269,7 +288,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v12.clear()
+                        fetch_data_v13.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -319,7 +338,7 @@ if sh:
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # --- 模式 3: 全新升級的原生日曆模式 (絕不卡月、精準顯示) ---
+    # --- 模式 3: 高對比、大字版原生日曆模式 ---
     elif view_mode == "📅 月曆模式":
         st.subheader(f"📅 {selected_month} 日曆視圖")
         
@@ -328,47 +347,48 @@ if sh:
         except:
             year, month = date.today().year, date.today().month
 
-        # 取得該月有幾天、第一天是星期幾 (0=週一, 6=週日)
         cal_matrix = py_calendar.monthcalendar(year, month)
         
-        # 星期標題
         weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
         cols = st.columns(7)
         for i, day_name in enumerate(weekdays):
-            cols[i].markdown(f"<h5 style='text-align: center;'>{day_name}</h5>", unsafe_allow_html=True)
+            cols[i].markdown(f"<h4 style='text-align: center; color: #ffffff;'>{day_name}</h4>", unsafe_allow_html=True)
             
         st.divider()
         
-        # 渲染日曆格子
         for week in cal_matrix:
             cols = st.columns(7)
             for i, day in enumerate(week):
                 with cols[i]:
                     if day == 0:
-                        st.markdown("<div style='color: #444; padding: 10px;'>-</div>", unsafe_allow_html=True)
+                        st.markdown("<div class='cal-card' style='opacity: 0.2;'><div class='cal-day-header'>-</div></div>", unsafe_allow_html=True)
                     else:
                         date_str = f"{year}-{month:02d}-{day:02d}"
-                        st.markdown(f"**📌 {day} 日**")
                         
-                        # 篩選當天的交易紀錄
+                        # 組裝卡片內容
+                        card_html = f"<div class='cal-card'><div class='cal-day-header'>{day} 日</div>"
+                        
                         if not df_selected.empty:
                             day_records = df_selected[df_selected["日期"].str.startswith(date_str)]
                             if not day_records.empty:
                                 for _, row in day_records.iterrows():
                                     t_type = str(row["類型"]).strip()
-                                    color = "red" if t_type == "支出" else "green"
+                                    # 提高深色背景下的顏色亮度 (亮紅/亮綠)
+                                    color = "#ff6b6b" if t_type == "支出" else "#51cf66"
                                     sign = "-" if t_type == "支出" else "+"
-                                    st.markdown(
-                                        f"<span style='color:{color}; font-size:13px;'>"
-                                        f"{sign}${row['金額']} ({row['分類']})</span><br>"
-                                        f"<span style='font-size:11px; color:#aaa;'>{row['備註']}</span>", 
-                                        unsafe_allow_html=True
+                                    
+                                    card_html += (
+                                        f"<div style='margin-bottom: 6px;'>"
+                                        f"<span style='color:{color}; font-size:14px; font-weight:bold;'>"
+                                        f"{sign}${row['金額']} ({row['分類']})"
+                                        f"</span><br>"
+                                        f"<span style='font-size:13px; color:#cccccc;'>"
+                                        f"{row['備註']}"
+                                        f"</span>"
+                                        f"</div>"
                                     )
-                            else:
-                                st.markdown("<span style='color:#555; font-size:12px;'>無紀錄</span>", unsafe_allow_html=True)
-                        else:
-                            st.markdown("<span style='color:#555; font-size:12px;'>無紀錄</span>", unsafe_allow_html=True)
-                        st.markdown("---")
+                        card_html += "</div>"
+                        st.markdown(card_html, unsafe_allow_html=True)
 
     # --- 模式 4: 歷史月份收納區 ---
     elif view_mode == "🗄️ 歷史月份收納區":
