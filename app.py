@@ -8,17 +8,16 @@ from streamlit_calendar import calendar
 # 網頁標題與基本設定
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
-# 🔥 終極精準 CSS 欄位寬度調整
+# 🔥 精準 CSS 欄位寬度調整
 st.markdown("""
 <style>
-    /* 調整資料編輯器 (stDataEditor) 內各欄位的寬度比例 */
     div[data-testid="stDataEditor"] th:nth-child(1), div[data-testid="stDataEditor"] td:nth-child(1) { width: 50px !important; min-width: 50px !important; }   /* 刪除 */
     div[data-testid="stDataEditor"] th:nth-child(2), div[data-testid="stDataEditor"] td:nth-child(2) { width: 110px !important; min-width: 110px !important; } /* 日期 */
     div[data-testid="stDataEditor"] th:nth-child(3), div[data-testid="stDataEditor"] td:nth-child(3) { width: 70px !important; min-width: 70px !important; }   /* 類型 */
     div[data-testid="stDataEditor"] th:nth-child(4), div[data-testid="stDataEditor"] td:nth-child(4) { width: 90px !important; min-width: 90px !important; }   /* 分類 */
     div[data-testid="stDataEditor"] th:nth-child(5), div[data-testid="stDataEditor"] td:nth-child(5) { width: 80px !important; min-width: 80px !important; }   /* 金額 */
     div[data-testid="stDataEditor"] th:nth-child(6), div[data-testid="stDataEditor"] td:nth-child(6) { width: 100px !important; min-width: 100px !important; } /* 付款方式 */
-    div[data-testid="stDataEditor"] th:nth-child(7), div[data-testid="stDataEditor"] td:nth-child(7) { width: auto !important; min-width: 250px !important; }  /* 備註 (自動佔滿剩餘空間) */
+    div[data-testid="stDataEditor"] th:nth-child(7), div[data-testid="stDataEditor"] td:nth-child(7) { width: auto !important; min-width: 250px !important; }  /* 備註 */
 </style>
 """, unsafe_allow_html=True)
 
@@ -59,9 +58,9 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 讀取函數：強效清洗與年月解析
+# 🔥 讀取函數：強效清洗所有字串、金額與日期格式
 @st.cache_data(ttl=3600)
-def fetch_data_v9(_sh):
+def fetch_data_v10(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -77,9 +76,11 @@ def fetch_data_v9(_sh):
         
         df_temp = pd.DataFrame(data_rows, columns=headers)
         
+        # 強制清理所有欄位的前後空白與不可見字元
         for col in df_temp.columns:
             df_temp[col] = df_temp[col].astype(str).str.strip()
             
+        # 處理日期與年月
         if "日期" in df_temp.columns:
             clean_dates = df_temp["日期"].str.replace("/", "-")
             parsed = pd.to_datetime(clean_dates, errors="coerce")
@@ -94,13 +95,18 @@ def fetch_data_v9(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v9(sh)
+df = fetch_data_v10(sh)
 
 if sh:
+    # 確保金額格式正確（數值化）
     if not df.empty and "金額" in df.columns:
         df["金額_num"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
     else:
         df["金額_num"] = 0
+
+    # 確保類型欄位乾淨無空白
+    if not df.empty and "類型" in df.columns:
+        df["類型"] = df["類型"].astype(str).str.strip()
 
     # ================= 側邊欄：月份篩選 =================
     st.sidebar.header("📅 月份篩選")
@@ -115,6 +121,7 @@ if sh:
     all_months = sorted(list(set(db_months + [current_month_str])), reverse=True)
     selected_month = st.sidebar.selectbox("選擇要檢視的月份", all_months, index=0)
     
+    # 根據選定月份精準過濾資料
     if not df.empty and "年月" in df.columns:
         df_selected = df[df["年月"] == selected_month]
     else:
@@ -140,7 +147,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v9.clear()
+                    fetch_data_v10.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -155,7 +162,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v9.clear()
+                fetch_data_v10.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -170,7 +177,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v9.clear()
+                fetch_data_v10.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -247,7 +254,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v9.clear()
+                            fetch_data_v10.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -267,7 +274,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v9.clear()
+                        fetch_data_v10.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -317,13 +324,16 @@ if sh:
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # --- 模式 3: 月曆模式 ---
+    # --- 模式 3: 月曆模式 (已修正：精準鎖定選定月份與正確顏色) ---
     elif view_mode == "📅 月曆模式":
         st.subheader(f"📅 {selected_month} 月曆視圖")
         if not df_selected.empty:
             events = []
             for idx, row in df_selected.iterrows():
-                event_color = "#FF3B30" if row["類型"] == "支出" else "#34C759"
+                # 確保正確對應支出紅與收入綠
+                tx_type_clean = str(row["類型"]).strip()
+                event_color = "#FF3B30" if tx_type_clean == "支出" else "#34C759"
+                
                 events.append({
                     "title": f"{row['分類']} ${row['金額']}",
                     "start": str(row["日期"]),
@@ -333,7 +343,8 @@ if sh:
             
             calendar_options = {
                 "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"},
-                "initialView": "dayGridMonth"
+                "initialView": "dayGridMonth",
+                "initialDate": f"{selected_month}-01" # 🔥 強制讓月曆跳到選定的年份與月份
             }
             calendar(events=events, options=calendar_options)
         else:
