@@ -75,7 +75,7 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 取得「固定支出設定」分頁 (若不存在則自動防呆建立)
+# 取得「固定支出設定」分頁
 def get_settings_worksheet(_sh):
     if not _sh:
         return None
@@ -93,9 +93,35 @@ def get_settings_worksheet(_sh):
 
 settings_ws = get_settings_worksheet(sh)
 
+# 讀取固定支出設定範本（強化防呆，無快取即時讀取）
+def fetch_fixed_templates(_settings_ws):
+    if not _settings_ws:
+        return {"孝親費": {"amount": 5000, "pay": "現金"}}
+    try:
+        data = _settings_ws.get_all_values()
+        if len(data) < 2:
+            return {}
+        templates = {}
+        for row in data[1:]:
+            if len(row) >= 1 and row[0].strip():
+                name = row[0].strip()
+                # 處理金額 (防呆：如果空白或填錯字就預設為 0)
+                try:
+                    amt = float(row[1].strip().replace(",", "")) if len(row) > 1 and row[1].strip() else 0
+                except:
+                    amt = 0
+                # 處理付款方式 (防呆：如果空白就預設現金)
+                pay = row[2].strip() if len(row) > 2 and row[2].strip() else "現金"
+                templates[name] = {"amount": amt, "pay": pay}
+        return templates
+    except Exception as e:
+        return {"孝親費": {"amount": 5000, "pay": "現金"}}
+
+fixed_templates = fetch_fixed_templates(settings_ws)
+
 # 資料讀取函數 (記帳主表)
-@st.cache_data(ttl=3600)
-def fetch_data_v19(_sh):
+@st.cache_data(ttl=300)
+def fetch_data_v20(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -128,30 +154,7 @@ def fetch_data_v19(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-# 讀取固定支出設定範本
-def fetch_fixed_templates(_settings_ws):
-    if not _settings_ws:
-        return {"孝親費": {"amount": 5000, "pay": "現金"}}
-    try:
-        data = _settings_ws.get_all_values()
-        if len(data) < 2:
-            return {}
-        templates = {}
-        for row in data[1:]:
-            if len(row) >= 3 and row[0].strip():
-                name = row[0].strip()
-                try:
-                    amt = float(row[1].strip())
-                except:
-                    amt = 0
-                pay = row[2].strip() if row[2].strip() else "現金"
-                templates[name] = {"amount": amt, "pay": pay}
-        return templates
-    except:
-        return {"孝親費": {"amount": 5000, "pay": "現金"}}
-
-df = fetch_data_v19(sh)
-fixed_templates = fetch_fixed_templates(settings_ws)
+df = fetch_data_v20(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -200,7 +203,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v19.clear()
+                    fetch_data_v20.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -215,7 +218,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v19.clear()
+                fetch_data_v20.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -242,7 +245,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v19.clear()
+                fetch_data_v20.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -335,7 +338,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v19.clear()
+                            fetch_data_v20.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -355,7 +358,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v19.clear()
+                        fetch_data_v20.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
