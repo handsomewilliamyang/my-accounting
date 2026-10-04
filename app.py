@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v25(_sh):
+def fetch_data_v26(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -152,7 +152,7 @@ def fetch_data_v25(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v25(sh)
+df = fetch_data_v26(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -181,7 +181,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v25.clear()
+                    fetch_data_v26.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +196,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v25.clear()
+                fetch_data_v26.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +223,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v25.clear()
+                fetch_data_v26.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -255,7 +255,7 @@ if sh:
                     except Exception as e:
                         st.sidebar.error(f"儲存失敗: {e}")
 
-    # ================= 主畫面上方：左右分欄（左：月份篩選，右：歷史月份收納區） =================
+    # ================= 主畫面上方：完美整合月份篩選器與歷史收納區 =================
     current_month_str = date.today().strftime("%Y-%m")
     
     if not df.empty and "年月" in df.columns:
@@ -271,7 +271,6 @@ if sh:
         selected_month = st.selectbox("📅 選擇要檢視的月份", all_months, index=0)
     
     with top_col2:
-        # 右側：歷史月份收納區 (改用下拉選單/Expander 呈現)
         with st.expander("🗄️ 歷史月份收納區 (點擊展開)"):
             if not df.empty and "年月" in df.columns:
                 sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
@@ -301,15 +300,20 @@ if sh:
         total_income = df_selected[df_selected["類型"] == "收入"]["金額_num"].sum()
         total_expense = df_selected[df_selected["類型"] == "支出"]["金額_num"].sum()
 
-    col_m1, col_m2 = st.columns(2)
+    net_balance = total_income - total_expense
+
+    # 🔥 三欄排版：總收入、總花費、本月結餘
+    col_m1, col_m2, col_m3 = st.columns(3)
     with col_m1:
         st.metric(label=f"📈 {selected_month} 總收入", value=f"${int(total_income):,}")
     with col_m2:
         st.metric(label=f"📉 {selected_month} 總花費", value=f"${int(total_expense):,}")
+    with col_m3:
+        st.metric(label=f"💰 {selected_month} 本月結餘", value=f"${int(net_balance):,}")
 
     st.divider()
 
-    # ================= 主畫面 偽分頁(Radio) 設計 (僅保留前三個核心模式) =================
+    # ================= 主畫面 偽分頁(Radio) 設計 =================
     view_mode = st.radio(
         "選擇檢視模式：", 
         ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式"], 
@@ -362,7 +366,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v25.clear()
+                            fetch_data_v26.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -382,7 +386,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v25.clear()
+                        fetch_data_v26.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
