@@ -77,7 +77,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 資料讀取函數
 @st.cache_data(ttl=3600)
-def fetch_data_v14(_sh):
+def fetch_data_v15(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -110,7 +110,7 @@ def fetch_data_v14(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v14(sh)
+df = fetch_data_v15(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -159,7 +159,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v14.clear()
+                    fetch_data_v15.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -174,7 +174,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v14.clear()
+                fetch_data_v15.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -189,7 +189,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v14.clear()
+                fetch_data_v15.clear()
                 st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -266,7 +266,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v14.clear()
+                            fetch_data_v15.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -286,7 +286,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v14.clear()
+                        fetch_data_v15.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -314,7 +314,7 @@ if sh:
         if not df_selected.empty:
             df_expense = df_selected[df_selected["類型"] == "支出"]
             if not df_expense.empty:
-                # 🔥 建立固定色票對應字典，確保圖餅圖顏色永遠固定
+                # 建立固定色票對應字典，確保圖餅圖與長條圖顏色永遠一致
                 color_map = {
                     "伙食": "#33ff57",
                     "交通": "#3357ff",
@@ -331,23 +331,23 @@ if sh:
                         df_expense, values='金額_num', names='分類', 
                         title=f'{selected_month} 各類別支出佔比', hole=0.4,
                         color='分類',
-                        color_discrete_map=color_map # 強制綁定固定顏色
+                        color_discrete_map=color_map
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with col2:
                     fig_bar = px.bar(
                         df_expense.groupby(['日期', '分類'], as_index=False)['金額_num'].sum(),
-                        x='日期', y='金額_num', color='分類',
+                        x='日期', y='金額_num',
                         title=f'{selected_month} 每日總支出趨勢', text_auto=True,
                         color='分類',
-                        color_discrete_map=color_map # 強制綁定固定顏色
+                        color_discrete_map=color_map
                     )
                     st.plotly_chart(fig_bar, use_container_width=True)
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # --- 模式 3: 月曆模式 (已修正：修復支出紅、收入綠的顏色顛倒問題) ---
+    # --- 模式 3: 月曆模式 ---
     elif view_mode == "📅 月曆模式":
         st.subheader(f"📅 {selected_month} 日曆視圖")
         
@@ -381,7 +381,6 @@ if sh:
                             if not day_records.empty:
                                 for _, row in day_records.iterrows():
                                     t_type = str(row["類型"]).strip()
-                                    # 🔥 修正顏色對應：支出為亮紅 (#ff6b6b)，收入為亮綠 (#51cf66)
                                     color = "#ff6b6b" if t_type == "支出" else "#51cf66"
                                     sign = "-" if t_type == "支出" else "+"
                                     
