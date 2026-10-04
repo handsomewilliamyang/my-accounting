@@ -8,10 +8,9 @@ import plotly.express as px
 # 網頁標題與基本設定
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
-# 🔥 針對明細表格與原生日曆的自訂 CSS 樣式
+# 欄位寬度與日曆樣式 CSS
 st.markdown("""
 <style>
-    /* 記帳明細表格各欄位寬度 */
     div[data-testid="stDataEditor"] th:nth-child(1), div[data-testid="stDataEditor"] td:nth-child(1) { width: 50px !important; min-width: 50px !important; }   /* 刪除 */
     div[data-testid="stDataEditor"] th:nth-child(2), div[data-testid="stDataEditor"] td:nth-child(2) { width: 110px !important; min-width: 110px !important; } /* 日期 */
     div[data-testid="stDataEditor"] th:nth-child(3), div[data-testid="stDataEditor"] td:nth-child(3) { width: 70px !important; min-width: 70px !important; }   /* 類型 */
@@ -20,7 +19,6 @@ st.markdown("""
     div[data-testid="stDataEditor"] th:nth-child(6), div[data-testid="stDataEditor"] td:nth-child(6) { width: 100px !important; min-width: 100px !important; } /* 付款方式 */
     div[data-testid="stDataEditor"] th:nth-child(7), div[data-testid="stDataEditor"] td:nth-child(7) { width: auto !important; min-width: 250px !important; }  /* 備註 */
 
-    /* 日曆模式專屬卡片樣式：增加深色背景與邊框，讓字體放大清晰 */
     .cal-card {
         background-color: #1e1e24;
         border: 1px solid #33333d;
@@ -79,7 +77,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 資料讀取函數
 @st.cache_data(ttl=3600)
-def fetch_data_v13(_sh):
+def fetch_data_v14(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -112,7 +110,7 @@ def fetch_data_v13(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v13(sh)
+df = fetch_data_v14(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -161,13 +159,13 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v13.clear()
+                    fetch_data_v14.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"寫入失敗: {e}")
+                    st.sidebar.error(f"寫入失敗: {e}")
             else:
-                st.warning("請輸入有效的金額！")
+                st.sidebar.warning("請輸入有效的金額！")
 
     with tab_salary:
         default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
@@ -176,11 +174,11 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v13.clear()
-                st.success(f"成功入帳薪資 ${default_salary:,}！")
+                fetch_data_v14.clear()
+                st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
-                st.error(f"薪資入帳失敗: {e}")
+                st.sidebar.error(f"薪資入帳失敗: {e}")
                 
     with tab_fixed:
         expense_note = st.text_input("支出項目 (例: 房租/電信費)", value="房租")
@@ -191,11 +189,11 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v13.clear()
-                st.success(f"成功記錄固定支出 ${default_expense:,}！")
+                fetch_data_v14.clear()
+                st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
-                st.error(f"支出記錄失敗: {e}")
+                st.sidebar.error(f"支出記錄失敗: {e}")
 
     # ================= 主畫面：針對「選定月份」計算收支 =================
     st.subheader(f"📅 目前檢視月份：{selected_month}")
@@ -268,7 +266,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v13.clear()
+                            fetch_data_v14.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -288,7 +286,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v13.clear()
+                        fetch_data_v14.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -316,29 +314,40 @@ if sh:
         if not df_selected.empty:
             df_expense = df_selected[df_selected["類型"] == "支出"]
             if not df_expense.empty:
+                # 🔥 建立固定色票對應字典，確保圖餅圖顏色永遠固定
+                color_map = {
+                    "伙食": "#33ff57",
+                    "交通": "#3357ff",
+                    "購物": "#ff33a8",
+                    "娛樂": "#ffbd33",
+                    "每月固定費用": "#ff5733",
+                    "其他支出": "#a833ff"
+                }
+                
                 col1, col2 = st.columns(2)
-                vivid_colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33A8', '#FFBD33', '#33FFF2', '#A833FF']
                 
                 with col1:
                     fig_pie = px.pie(
                         df_expense, values='金額_num', names='分類', 
                         title=f'{selected_month} 各類別支出佔比', hole=0.4,
-                        color_discrete_sequence=vivid_colors
+                        color='分類',
+                        color_discrete_map=color_map # 強制綁定固定顏色
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with col2:
-                    df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額_num'].sum()
                     fig_bar = px.bar(
-                        df_daily, x='日期', y='金額_num', color='分類',
+                        df_expense.groupby(['日期', '分類'], as_index=False)['金額_num'].sum(),
+                        x='日期', y='金額_num', color='分類',
                         title=f'{selected_month} 每日總支出趨勢', text_auto=True,
-                        color_discrete_sequence=vivid_colors
+                        color='分類',
+                        color_discrete_map=color_map # 強制綁定固定顏色
                     )
                     st.plotly_chart(fig_bar, use_container_width=True)
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # --- 模式 3: 高對比、大字版原生日曆模式 ---
+    # --- 模式 3: 月曆模式 (已修正：修復支出紅、收入綠的顏色顛倒問題) ---
     elif view_mode == "📅 月曆模式":
         st.subheader(f"📅 {selected_month} 日曆視圖")
         
@@ -365,7 +374,6 @@ if sh:
                     else:
                         date_str = f"{year}-{month:02d}-{day:02d}"
                         
-                        # 組裝卡片內容
                         card_html = f"<div class='cal-card'><div class='cal-day-header'>{day} 日</div>"
                         
                         if not df_selected.empty:
@@ -373,7 +381,7 @@ if sh:
                             if not day_records.empty:
                                 for _, row in day_records.iterrows():
                                     t_type = str(row["類型"]).strip()
-                                    # 提高深色背景下的顏色亮度 (亮紅/亮綠)
+                                    # 🔥 修正顏色對應：支出為亮紅 (#ff6b6b)，收入為亮綠 (#51cf66)
                                     color = "#ff6b6b" if t_type == "支出" else "#51cf66"
                                     sign = "-" if t_type == "支出" else "+"
                                     
