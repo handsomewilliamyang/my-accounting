@@ -45,9 +45,9 @@ def get_google_sheet():
 sh = get_google_sheet()
 worksheet = sh.get_worksheet(0) if sh else None
 
-# 🔥 終極讀取函數：強制換名躲避舊快取，並暴力剷除所有隱藏空白
+# 🔥 讀取函數：強效清洗與年月解析
 @st.cache_data(ttl=3600)
-def fetch_data_v5(_sh):
+def fetch_data_v6(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -57,20 +57,15 @@ def fetch_data_v5(_sh):
         if len(raw_data) < 2:
             return pd.DataFrame()
             
-        # 清洗標題列：去掉所有前後空白與隱藏字元
         headers = [str(h).strip().replace('\u200b', '').replace('\n', '') for h in raw_data[0]]
-        
-        # 對齊資料列
         data_rows = [row + [""] * (len(headers) - len(row)) for row in raw_data[1:]]
         data_rows = [row[:len(headers)] for row in data_rows]
         
         df_temp = pd.DataFrame(data_rows, columns=headers)
         
-        # 清洗所有資料的空白字元
         for col in df_temp.columns:
             df_temp[col] = df_temp[col].astype(str).str.strip()
             
-        # 處理日期與年月
         if "日期" in df_temp.columns:
             clean_dates = df_temp["日期"].str.replace("/", "-")
             parsed = pd.to_datetime(clean_dates, errors="coerce")
@@ -85,11 +80,14 @@ def fetch_data_v5(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v5(sh)
+df = fetch_data_v6(sh)
 
 if sh:
+    # 確保金額格式正確（用於後端數值計算加總）
     if not df.empty and "金額" in df.columns:
-        df["金額"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
+        df["金額_num"] = pd.to_numeric(df["金額"], errors="coerce").fillna(0)
+    else:
+        df["金額_num"] = 0
 
     # ================= 側邊欄：月份篩選 =================
     st.sidebar.header("📅 月份篩選")
@@ -114,10 +112,8 @@ if sh:
     # ================= 側邊欄：整合式新增記帳 (Tabs) =================
     st.sidebar.header("➕ 新增記帳")
     
-    # 建立三個分頁標籤，把落落長的欄位收納起來
     tab_general, tab_salary, tab_fixed = st.sidebar.tabs(["一般", "💰薪資", "🏠固定支出"])
     
-    # 1. 一般記帳區
     with tab_general:
         amount = st.number_input("金額", value=None, step=1, placeholder="請輸入金額...")
         category = st.selectbox("分類", ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出", "薪資", "其他收入"])
@@ -129,9 +125,9 @@ if sh:
         if st.button("送出一般記帳"):
             if amount is not None and amount > 0:
                 try:
-                    row = [str(tx_date), tx_type, category, amount, pay_method, note]
+                    row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v5.clear()
+                    fetch_data_v6.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -139,21 +135,19 @@ if sh:
             else:
                 st.warning("請輸入有效的金額！")
 
-    # 2. 快速帶入固定薪資區
     with tab_salary:
         default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
         if st.button("📥 一鍵入帳本月薪資"):
             try:
-                salary_row = [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"]
+                salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v5.clear()
+                fetch_data_v6.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
                 st.error(f"薪資入帳失敗: {e}")
                 
-    # 3. 快速帶入固定支出區
     with tab_fixed:
         expense_note = st.text_input("支出項目 (例: 房租/電信費)", value="房租")
         default_expense = st.number_input("預設支出金額", value=10000, step=500)
@@ -161,9 +155,9 @@ if sh:
         expense_date = st.date_input("扣款日期", value=date.today(), key="exp_date")
         if st.button("📤 一鍵扣款固定支出"):
             try:
-                expense_row = [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note]
+                expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v5.clear()
+                fetch_data_v6.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -176,14 +170,14 @@ if sh:
     total_expense = 0
     
     if not df_selected.empty and "類型" in df_selected.columns:
-        total_income = df_selected[df_selected["類型"] == "收入"]["金額"].sum()
-        total_expense = df_selected[df_selected["類型"] == "支出"]["金額"].sum()
+        total_income = df_selected[df_selected["類型"] == "收入"]["金額_num"].sum()
+        total_expense = df_selected[df_selected["類型"] == "支出"]["金額_num"].sum()
 
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        st.metric(label=f"📈 {selected_month} 總收入", value=f"${total_income:,}")
+        st.metric(label=f"📈 {selected_month} 總收入", value=f"${int(total_income):,}")
     with col_m2:
-        st.metric(label=f"📉 {selected_month} 總花費", value=f"${total_expense:,}")
+        st.metric(label=f"📉 {selected_month} 總花費", value=f"${int(total_expense):,}")
 
     st.divider()
 
@@ -204,23 +198,32 @@ if sh:
             df_display = df_selected.copy()
             if "年月" in df_display.columns:
                 df_display = df_display.drop(columns=["年月"])
+            if "金額_num" in df_display.columns:
+                df_display = df_display.drop(columns=["金額_num"])
+                
             df_display.insert(0, "刪除", False)
             
+            # 🔥 關鍵修改：使用 TextColumn 將金額欄位強制靠左對齊顯示
             edited_df = st.data_editor(
                 df_display, 
                 use_container_width=True,
                 hide_index=True,
-                key="expense_table"
+                key="expense_table",
+                column_config={
+                    "金額": st.column_config.TextColumn(
+                        "金額",
+                        help="點擊可直接修改金額"
+                    )
+                }
             )
             
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("🗑️ 刪除所選項目"):
+                if st.button("🗑️️ 刪除所選項目"):
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
-                            # 更精準的刪除對位方式
                             for row_idx in sorted(rows_to_delete, reverse=True):
                                 target_row = df_selected.iloc[row_idx]
                                 original_index = df.index[(df["日期"] == target_row["日期"]) & 
@@ -229,7 +232,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v5.clear()
+                            fetch_data_v6.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -242,14 +245,14 @@ if sh:
                     try:
                         save_df = edited_df.drop(columns=["刪除"])
                         save_df = save_df.fillna("")
-                        other_df = df[df["年月"] != selected_month].drop(columns=["年月"])
+                        other_df = df[df["年月"] != selected_month].drop(columns=["年月", "金額_num"])
                         final_save_df = pd.concat([other_df, save_df], ignore_index=True)
                         
                         new_data = [final_save_df.columns.values.tolist()] + final_save_df.values.tolist()
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v5.clear()
+                        fetch_data_v6.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -263,8 +266,8 @@ if sh:
         if not df_selected.empty:
             df_fixed = df_selected[df_selected["分類"] == "每月固定費用"]
             if not df_fixed.empty:
-                total_fixed = df_fixed["金額"].sum()
-                st.metric(label="💰 固定開銷總計", value=f"${total_fixed:,}")
+                total_fixed = df_fixed["金額_num"].sum()
+                st.metric(label="💰 固定開銷總計", value=f"${int(total_fixed):,}")
                 st.dataframe(df_fixed[["日期", "金額", "付款方式", "備註"]], use_container_width=True)
             else:
                 st.info("此月份尚無設定「每月固定費用」的紀錄。")
@@ -282,16 +285,16 @@ if sh:
                 
                 with col1:
                     fig_pie = px.pie(
-                        df_expense, values='金額', names='分類', 
+                        df_expense, values='金額_num', names='分類', 
                         title=f'{selected_month} 各類別支出佔比', hole=0.4,
                         color_discrete_sequence=vivid_colors
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with col2:
-                    df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額'].sum()
+                    df_daily = df_expense.groupby(['日期', '分類'], as_index=False)['金額_num'].sum()
                     fig_bar = px.bar(
-                        df_daily, x='日期', y='金額', color='分類',
+                        df_daily, x='日期', y='金額_num', color='分類',
                         title=f'{selected_month} 每日總支出趨勢', text_auto=True,
                         color_discrete_sequence=vivid_colors
                     )
@@ -330,16 +333,18 @@ if sh:
             for m in sorted_months:
                 if len(str(m)) < 7: continue
                 df_m = df[df["年月"] == m]
-                m_income = df_m[df_m["類型"] == "收入"]["金額"].sum()
-                m_expense = df_m[df_m["類型"] == "支出"]["金額"].sum()
+                m_income = df_m[df_m["類型"] == "收入"]["金額_num"].sum()
+                m_expense = df_m[df_m["類型"] == "支出"]["金額_num"].sum()
                 net_amount = m_income - m_expense
                 
-                with st.expander(f"📂 點擊展開：{m} 月份報表 (收入: ${m_income:,} | 支出: ${m_expense:,} | 結餘: ${net_amount:,})"):
+                with st.expander(f"📂 點擊展開：{m} 月份報表 (收入: ${int(m_income):,} | 支出: ${int(m_expense):,} | 結餘: ${int(net_amount):,})"):
                     col_ex1, col_ex2, col_ex3 = st.columns(3)
-                    col_ex1.metric("總收入", f"${m_income:,}")
-                    col_ex2.metric("總支出", f"${m_expense:,}")
-                    col_ex3.metric("月結餘", f"${net_amount:,}")
-                    st.dataframe(df_m.drop(columns=["年月"]), use_container_width=True)
+                    col_ex1.metric("總收入", f"${int(m_income):,}")
+                    col_ex2.metric("總支出", f"${int(m_expense):,}")
+                    col_ex3.metric("月結餘", f"${int(net_amount):,}")
+                    
+                    df_m_display = df_m.drop(columns=["年月", "金額_num"])
+                    st.dataframe(df_m_display, use_container_width=True)
         else:
             st.info("目前尚無任何歷史資料。")
 
