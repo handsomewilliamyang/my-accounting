@@ -93,7 +93,7 @@ def get_settings_worksheet(_sh):
 
 settings_ws = get_settings_worksheet(sh)
 
-# 讀取固定支出設定範本（強化防呆，無快取即時讀取）
+# 讀取固定支出設定範本
 def fetch_fixed_templates(_settings_ws):
     if not _settings_ws:
         return {"孝親費": {"amount": 5000, "pay": "現金"}}
@@ -105,12 +105,10 @@ def fetch_fixed_templates(_settings_ws):
         for row in data[1:]:
             if len(row) >= 1 and row[0].strip():
                 name = row[0].strip()
-                # 處理金額 (防呆：如果空白或填錯字就預設為 0)
                 try:
                     amt = float(row[1].strip().replace(",", "")) if len(row) > 1 and row[1].strip() else 0
                 except:
                     amt = 0
-                # 處理付款方式 (防呆：如果空白就預設現金)
                 pay = row[2].strip() if len(row) > 2 and row[2].strip() else "現金"
                 templates[name] = {"amount": amt, "pay": pay}
         return templates
@@ -121,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v20(_sh):
+def fetch_data_v21(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -154,7 +152,7 @@ def fetch_data_v20(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v20(sh)
+df = fetch_data_v21(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -203,7 +201,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v20.clear()
+                    fetch_data_v21.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -218,7 +216,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v20.clear()
+                fetch_data_v21.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -245,27 +243,38 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v20.clear()
+                fetch_data_v21.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"支出記錄失敗: {e}")
 
         st.divider()
-        with st.expander("➕ 在網頁直接新增常用範本"):
-            new_tpl_name = st.text_input("新項目名稱 (例: 健身房)")
-            new_tpl_amt = st.number_input("預設金額", value=1000, step=100, key="new_amt")
-            new_tpl_pay = st.selectbox("預設付款方式", ["現金", "信用卡", "行動支付"], key="new_pay")
-            if st.button("💾 儲存至 Google 試算表設定檔"):
-                if new_tpl_name and settings_ws:
+        with st.expander("⚙️ 線上修改或新增固定支出清單"):
+            if settings_ws:
+                raw_settings = settings_ws.get_all_values()
+                if len(raw_settings) > 1:
+                    df_settings = pd.DataFrame(raw_settings[1:], columns=raw_settings[0])
+                else:
+                    df_settings = pd.DataFrame(columns=["項目名稱", "預設金額", "付款方式"])
+                
+                # 讓你在網頁直接編輯表格
+                edited_settings = st.data_editor(
+                    df_settings,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key="settings_editor"
+                )
+                
+                if st.button("💾 儲存範本修改"):
                     try:
-                        settings_ws.append_row([new_tpl_name, str(new_tpl_amt), new_tpl_pay])
-                        st.sidebar.success(f"成功新增範本：{new_tpl_name}")
+                        new_settings_data = [["項目名稱", "預設金額", "付款方式"]] + edited_settings.values.tolist()
+                        settings_ws.clear()
+                        settings_ws.update(range_name="A1", values=new_settings_data)
+                        st.sidebar.success("固定支出範本已成功更新！")
                         st.rerun()
                     except Exception as e:
                         st.sidebar.error(f"儲存失敗：{e}")
-                else:
-                    st.sidebar.warning("請輸入項目名稱！")
 
     # ================= 主畫面：針對「選定月份」計算收支 =================
     st.subheader(f"📅 目前檢視月份：{selected_month}")
@@ -338,7 +347,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v20.clear()
+                            fetch_data_v21.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -358,7 +367,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v20.clear()
+                        fetch_data_v21.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -470,7 +479,7 @@ if sh:
 
     # --- 模式 4: 歷史月份收納區 ---
     elif view_mode == "🗄️ 歷史月份收納區":
-        st.subheader("🗄️ 歷史月份收納與快速查閱")
+        st.subheader("🗄️️ 歷史月份收納與快速查閱")
         
         if not df.empty and "年月" in df.columns:
             sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
