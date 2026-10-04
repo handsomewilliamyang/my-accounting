@@ -77,7 +77,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 資料讀取函數
 @st.cache_data(ttl=3600)
-def fetch_data_v15(_sh):
+def fetch_data_v16(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -110,7 +110,7 @@ def fetch_data_v15(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v15(sh)
+df = fetch_data_v16(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -159,7 +159,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v15.clear()
+                    fetch_data_v16.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -174,23 +174,36 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v15.clear()
+                fetch_data_v16.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"薪資入帳失敗: {e}")
                 
     with tab_fixed:
-        expense_note = st.text_input("支出項目 (例: 房租/電信費)", value="房租")
-        default_expense = st.number_input("預設支出金額", value=10000, step=500)
-        expense_pay = st.selectbox("付款方式", ["現金", "信用卡"], key="exp_pay")
+        # 🔥 預設常用固定支出範本字典 (你可以隨時在這裡增減你的常用項目)
+        fixed_templates = {
+            "孝親費": {"amount": 5000, "pay": "現金", "note": "孝親費"},
+            "房租": {"amount": 10000, "pay": "現金", "note": "房租"},
+            "電信費": {"amount": 599, "pay": "信用卡", "note": "電信費"}
+        }
+        
+        selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
+        
+        # 根據選擇的範本自動帶入預設值
+        default_val = fixed_templates[selected_template]
+        
+        expense_note = st.text_input("支出項目名稱", value=default_val["note"])
+        default_expense = st.number_input("預設支出金額", value=default_val["amount"], step=100)
+        expense_pay = st.selectbox("付款方式", ["現金", "信用卡", "行動支付"], index=["現金", "信用卡", "行動支付"].index(default_val["pay"]) if default_val["pay"] in ["現金", "信用卡", "行動支付"] else 0, key="exp_pay")
         expense_date = st.date_input("扣款日期", value=date.today(), key="exp_date")
+        
         if st.button("📤 一鍵扣款固定支出"):
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v15.clear()
-                st.sidebar.success(f"成功記錄固定支出 ${default_expense:,}！")
+                fetch_data_v16.clear()
+                st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"支出記錄失敗: {e}")
@@ -266,7 +279,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v15.clear()
+                            fetch_data_v16.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -286,7 +299,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v15.clear()
+                        fetch_data_v16.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -314,7 +327,6 @@ if sh:
         if not df_selected.empty:
             df_expense = df_selected[df_selected["類型"] == "支出"]
             if not df_expense.empty:
-                # 建立固定色票對應字典，確保圖餅圖與長條圖顏色永遠一致
                 color_map = {
                     "伙食": "#33ff57",
                     "交通": "#3357ff",
@@ -399,7 +411,7 @@ if sh:
 
     # --- 模式 4: 歷史月份收納區 ---
     elif view_mode == "🗄️ 歷史月份收納區":
-        st.subheader("🗄️ 歷史月份收納與快速查閱")
+        st.subheader("🗄️️ 歷史月份收納與快速查閱")
         
         if not df.empty and "年月" in df.columns:
             sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
