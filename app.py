@@ -1,14 +1,14 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+import calendar as py_calendar
 import plotly.express as px
-from streamlit_calendar import calendar
 
 # 網頁標題與基本設定
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
-# 欄位寬度調整 CSS
+# 精準 CSS 欄位寬度調整
 st.markdown("""
 <style>
     div[data-testid="stDataEditor"] th:nth-child(1), div[data-testid="stDataEditor"] td:nth-child(1) { width: 50px !important; min-width: 50px !important; }   /* 刪除 */
@@ -60,7 +60,7 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 # 資料讀取函數
 @st.cache_data(ttl=3600)
-def fetch_data_v11(_sh):
+def fetch_data_v12(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -93,7 +93,7 @@ def fetch_data_v11(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v11(sh)
+df = fetch_data_v12(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -142,7 +142,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v11.clear()
+                    fetch_data_v12.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -157,7 +157,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v11.clear()
+                fetch_data_v12.clear()
                 st.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -172,7 +172,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v11.clear()
+                fetch_data_v12.clear()
                 st.success(f"成功記錄固定支出 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -249,7 +249,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v11.clear()
+                            fetch_data_v12.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -269,7 +269,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v11.clear()
+                        fetch_data_v12.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -319,34 +319,56 @@ if sh:
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # --- 模式 3: 月曆模式 (已修復：強效鎖定月份與標準事件格式) ---
+    # --- 模式 3: 全新升級的原生日曆模式 (絕不卡月、精準顯示) ---
     elif view_mode == "📅 月曆模式":
-        st.subheader(f"📅 {selected_month} 月曆視圖")
-        if not df_selected.empty:
-            events = []
-            for idx, row in df_selected.iterrows():
-                tx_type_clean = str(row["類型"]).strip()
-                event_color = "#FF3B30" if tx_type_clean == "支出" else "#34C759"
-                
-                # 將日期格式化為 FullCalendar 支援的標準 ISO 格式 (YYYY-MM-DD)
-                event_date = str(row["日期"]).strip()[:10]
-                
-                events.append({
-                    "title": f"{row['分類']} ${row['金額']}",
-                    "start": event_date,
-                    "backgroundColor": event_color,
-                    "borderColor": event_color
-                })
+        st.subheader(f"📅 {selected_month} 日曆視圖")
+        
+        try:
+            year, month = map(int, selected_month.split("-"))
+        except:
+            year, month = date.today().year, date.today().month
+
+        # 取得該月有幾天、第一天是星期幾 (0=週一, 6=週日)
+        cal_matrix = py_calendar.monthcalendar(year, month)
+        
+        # 星期標題
+        weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
+        cols = st.columns(7)
+        for i, day_name in enumerate(weekdays):
+            cols[i].markdown(f"<h5 style='text-align: center;'>{day_name}</h5>", unsafe_allow_html=True)
             
-            calendar_options = {
-                "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"},
-                "initialView": "dayGridMonth",
-                "initialDate": f"{selected_month}-01" # 強制指定當月第一天
-            }
-            # 🔥 關鍵修復：加入唯一的 key 讓元件強制重繪並套用 initialDate
-            calendar(events=events, options=calendar_options, key=f"cal_{selected_month}")
-        else:
-            st.info("此月份尚無資料可顯示於月曆。")
+        st.divider()
+        
+        # 渲染日曆格子
+        for week in cal_matrix:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day == 0:
+                        st.markdown("<div style='color: #444; padding: 10px;'>-</div>", unsafe_allow_html=True)
+                    else:
+                        date_str = f"{year}-{month:02d}-{day:02d}"
+                        st.markdown(f"**📌 {day} 日**")
+                        
+                        # 篩選當天的交易紀錄
+                        if not df_selected.empty:
+                            day_records = df_selected[df_selected["日期"].str.startswith(date_str)]
+                            if not day_records.empty:
+                                for _, row in day_records.iterrows():
+                                    t_type = str(row["類型"]).strip()
+                                    color = "red" if t_type == "支出" else "green"
+                                    sign = "-" if t_type == "支出" else "+"
+                                    st.markdown(
+                                        f"<span style='color:{color}; font-size:13px;'>"
+                                        f"{sign}${row['金額']} ({row['分類']})</span><br>"
+                                        f"<span style='font-size:11px; color:#aaa;'>{row['備註']}</span>", 
+                                        unsafe_allow_html=True
+                                    )
+                            else:
+                                st.markdown("<span style='color:#555; font-size:12px;'>無紀錄</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<span style='color:#555; font-size:12px;'>無紀錄</span>", unsafe_allow_html=True)
+                        st.markdown("---")
 
     # --- 模式 4: 歷史月份收納區 ---
     elif view_mode == "🗄️ 歷史月份收納區":
