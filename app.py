@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v23(_sh):
+def fetch_data_v24(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -152,7 +152,7 @@ def fetch_data_v23(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v23(sh)
+df = fetch_data_v24(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -163,7 +163,7 @@ if sh:
     if not df.empty and "類型" in df.columns:
         df["類型"] = df["類型"].astype(str).str.strip()
 
-    # ================= 側邊欄：僅保留新增記帳 =================
+    # ================= 側邊欄：僅保留新增記帳與固定支出管理 =================
     st.sidebar.header("➕ 新增記帳")
     
     tab_general, tab_salary, tab_fixed = st.sidebar.tabs(["一般", "💰薪資", "🏠固定支出"])
@@ -181,7 +181,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v23.clear()
+                    fetch_data_v24.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +196,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v23.clear()
+                fetch_data_v24.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +223,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v23.clear()
+                fetch_data_v24.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -289,10 +289,10 @@ if sh:
 
     st.divider()
 
-    # ================= 主畫面 偽分頁(Radio) 設計 =================
+    # ================= 主畫面 偽分頁(Radio) 設計 (僅保留前三個核心模式) =================
     view_mode = st.radio(
         "選擇檢視模式：", 
-        ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式", "🗄️ 歷史月份收納區"], 
+        ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式"], 
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -342,7 +342,7 @@ if sh:
                                 if original_index:
                                     worksheet.delete_rows(original_index[0] + 2)
                                 
-                            fetch_data_v23.clear()
+                            fetch_data_v24.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -362,7 +362,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v23.clear()
+                        fetch_data_v24.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -472,29 +472,24 @@ if sh:
                         card_html += "</div>"
                         st.markdown(card_html, unsafe_allow_html=True)
 
-    # --- 模式 4: 歷史月份收納區 ---
-    elif view_mode == "🗄️ 歷史月份收納區":
-        st.subheader("🗄️ 歷史月份收納與快速查閱")
-        
-        if not df.empty and "年月" in df.columns:
-            sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
-            for m in sorted_months:
-                if len(str(m)) < 7: continue
-                df_m = df[df["年月"] == m]
-                m_income = df_m[df_m["類型"] == "收入"]["金額_num"].sum()
-                m_expense = df_m[df_m["類型"] == "支出"]["金額_num"].sum()
-                net_amount = m_income - m_expense
-                
-                with st.expander(f"📂 點擊展開：{m} 月份報表 (收入: ${int(m_income):,} | 支出: ${int(m_expense):,} | 結餘: ${int(net_amount):,})"):
-                    col_ex1, col_ex2, col_ex3 = st.columns(3)
-                    col_ex1.metric("總收入", f"${int(m_income):,}")
-                    col_ex2.metric("總支出", f"${int(m_expense):,}")
-                    col_ex3.metric("月結餘", f"${int(net_amount):,}")
-                    
-                    df_m_display = df_m.drop(columns=["年月", "金額_num"])
-                    st.dataframe(df_m_display, use_container_width=True)
-        else:
-            st.info("目前尚無任何歷史資料。")
+    # ================= 側邊欄最下方：獨立的歷史月份收納區 =================
+    st.sidebar.divider()
+    st.sidebar.header("🗄️ 歷史月份收納區")
+    if not df.empty and "年月" in df.columns:
+        sorted_months = sorted(df["年月"].dropna().unique().tolist(), reverse=True)
+        for m in sorted_months:
+            if len(str(m)) < 7: continue
+            df_m = df[df["年月"] == m]
+            m_income = df_m[df_m["類型"] == "收入"]["金額_num"].sum()
+            m_expense = df_m[df_m["類型"] == "支出"]["金額_num"].sum()
+            net_amount = m_income - m_expense
+            
+            with st.sidebar.expander(f"📂 {m} 結餘: ${int(net_amount):,}"):
+                st.write(f"收入: ${int(m_income):,}")
+                st.write(f"支出: ${int(m_expense):,}")
+                st.dataframe(df_m.drop(columns=["年月", "金額_num"]), use_container_width=True)
+    else:
+        st.sidebar.info("目前尚無歷史資料。")
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
