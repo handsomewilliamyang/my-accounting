@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v30(_sh):
+def fetch_data_v31(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -152,7 +152,7 @@ def fetch_data_v30(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v30(sh)
+df = fetch_data_v31(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -181,7 +181,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v30.clear()
+                    fetch_data_v31.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +196,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v30.clear()
+                fetch_data_v31.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +223,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v30.clear()
+                fetch_data_v31.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -305,6 +305,37 @@ if sh:
     # --- 模式 1: 記帳明細列表 ---
     if view_mode == "📋 記帳明細列表":
         st.subheader(f"📋 {selected_month} 記帳明細列表")
+        
+        # 🔥 新增：網頁專屬「指定金額快速清除工具」
+        with st.expander("🛠️ 快速清除錯誤交易小工具 (免勾選直接刪除)"):
+            target_amt_to_del = st.text_input("輸入要刪除的金額 (例如: 301 或 2005 或 %amount1)")
+            if st.button("🚀 執行精準刪除此金額"):
+                if target_amt_to_del:
+                    try:
+                        fresh_raw = worksheet.get_all_values()
+                        if len(fresh_raw) > 1:
+                            fresh_rows = fresh_raw[1:]
+                            deleted_count = 0
+                            # 由後往前刪除避免行號位移
+                            for i in range(len(fresh_rows) - 1, -1, -1):
+                                row = fresh_rows[i]
+                                row_padded = row + [""] * (6 - len(row))
+                                # 檢查金額欄位（通常是索引 3）是否符合
+                                if target_amt_to_del.strip() in [str(cell).strip() for cell in row_padded]:
+                                    worksheet.delete_rows(i + 2)
+                                    deleted_count += 1
+                            
+                            fetch_data_v31.clear()
+                            if deleted_count > 0:
+                                st.success(f"成功從雲端刪除了 {deleted_count} 筆符合「{target_amt_to_del}」的記錄！")
+                                st.rerun()
+                            else:
+                                st.warning("找不到符合該金額或內容的記錄，請再確認一次！")
+                    except Exception as e:
+                        st.error(f"刪除失敗：{e}")
+                else:
+                    st.warning("請先輸入要刪除的金額或代碼！")
+
         if not df_selected.empty:
             df_display = df_selected.copy()
             if "年月" in df_display.columns:
@@ -337,15 +368,12 @@ if sh:
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
-                            # 重新讀取雲端最新明細以確保行號絕對準確
                             fresh_raw = worksheet.get_all_values()
                             if len(fresh_raw) > 1:
-                                fresh_headers = fresh_raw[0]
                                 fresh_rows = fresh_raw[1:]
                             else:
-                                fresh_headers, fresh_rows = [], []
+                                fresh_rows = []
                                 
-                            # 找出要刪除的目標內容
                             targets_to_remove = []
                             for r_idx in rows_to_delete:
                                 t_row = df_selected.iloc[r_idx]
@@ -358,11 +386,9 @@ if sh:
                                     "備註": str(t_row["備註"]).strip()
                                 })
                             
-                            # 從雲端資料由後往前比對刪除，避免行號錯亂
                             for target in targets_to_remove:
                                 for i in range(len(fresh_rows) - 1, -1, -1):
                                     row = fresh_rows[i]
-                                    # 補齊欄位避免長度不一
                                     row_padded = row + [""] * (6 - len(row))
                                     if (row_padded[0].strip() == target["日期"] and
                                         row_padded[1].strip() == target["類型"] and
@@ -373,7 +399,7 @@ if sh:
                                         worksheet.delete_rows(i + 2)
                                         break
                                         
-                            fetch_data_v30.clear()
+                            fetch_data_v31.clear()
                             st.success("已成功從 Google 試算表刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -393,7 +419,7 @@ if sh:
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v30.clear()
+                        fetch_data_v31.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
@@ -487,7 +513,7 @@ if sh:
                             if not day_records.empty:
                                 for _, row in day_records.iterrows():
                                     t_type = str(row["類型"]).strip()
-                                    color = "#ff6b6b" if t_type == "支出" else "#51cf64"
+                                    color = "#ff6b6b" if t_type == "支出" else "#51cf66"
                                     sign = "-" if t_type == "支出" else "+"
                                     
                                     card_html += (
