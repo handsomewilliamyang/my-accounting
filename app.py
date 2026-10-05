@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v27(_sh):
+def fetch_data_v29(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -152,7 +152,7 @@ def fetch_data_v27(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v27(sh)
+df = fetch_data_v29(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -181,7 +181,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v27.clear()
+                    fetch_data_v29.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +196,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v27.clear()
+                fetch_data_v29.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +223,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v27.clear()
+                fetch_data_v29.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -337,15 +337,24 @@ if sh:
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
-                            for row_idx in sorted(rows_to_delete, reverse=True):
+                            for row_idx in rows_to_delete:
                                 target_row = df_selected.iloc[row_idx]
-                                original_index = df.index[(df["日期"] == target_row["日期"]) & 
-                                                          (df["金額"] == target_row["金額"]) & 
-                                                          (df["備註"] == target_row["備註"])].tolist()
-                                if original_index:
-                                    worksheet.delete_rows(original_index[0] + 2)
+                                # 更穩健地透過比對整行資料找出在總表中的真實行號
+                                match_mask = (
+                                    (df["日期"] == target_row["日期"]) & 
+                                    (df["類型"] == target_row["類型"]) & 
+                                    (df["分類"] == target_row["分類"]) & 
+                                    (df["金額"] == target_row["金額"]) & 
+                                    (df["付款方式"] == target_row["付款方式"]) & 
+                                    (df["備註"] == target_row["備註"])
+                                )
+                                original_indices = df.index[match_mask].tolist()
+                                if original_indices:
+                                    worksheet.delete_rows(original_indices[0] + 2)
+                                    # 同步更新當前記憶體裡的 df 避免連續刪除錯亂
+                                    df = df.drop(original_indices[0]).reset_index(drop=True)
                                 
-                            fetch_data_v27.clear()
+                            fetch_data_v29.clear()
                             st.success("已成功刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
@@ -358,14 +367,14 @@ if sh:
                     try:
                         save_df = edited_df.drop(columns=["刪除"])
                         save_df = save_df.fillna("")
-                        other_df = df[df["年月"] != selected_month].drop(columns=["年月", "金額_num"])
+                        other_df = df[df["年月"] != selected_month].drop(columns=["年月", "金額_num"], errors="ignore")
                         final_save_df = pd.concat([other_df, save_df], ignore_index=True)
                         
                         new_data = [final_save_df.columns.values.tolist()] + final_save_df.values.tolist()
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v27.clear()
+                        fetch_data_v29.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
