@@ -119,7 +119,7 @@ fixed_templates = fetch_fixed_templates(settings_ws)
 
 # 資料讀取函數 (記帳主表)
 @st.cache_data(ttl=300)
-def fetch_data_v31(_sh):
+def fetch_data_v32(_sh):
     if not _sh:
         return pd.DataFrame()
     try:
@@ -130,15 +130,26 @@ def fetch_data_v31(_sh):
             return pd.DataFrame()
             
         headers = [str(h).strip().replace('\u200b', '').replace('\n', '') for h in raw_data[0]]
-        data_rows = [row + [""] * (len(headers) - len(row)) for row in raw_data[1:]]
-        data_rows = [row[:len(headers)] for row in data_rows]
+        # 確保固定只抓前 6 個主要欄位，避免多出奇怪的欄位
+        headers = headers[:6]
         
-        df_temp = pd.DataFrame(data_rows, columns=headers)
-        
-        for col in df_temp.columns:
-            df_temp[col] = df_temp[col].astype(str).str.strip()
+        data_rows = []
+        for r_idx, row in enumerate(raw_data[1:]):
+            row_padded = row[:6] + [""] * max(0, 6 - len(row))
+            # 順便記錄這筆資料在 Google 試算表裡的真實行號 (從第 2 行開始算起)
+            data_rows.append({
+                "excel_row": r_idx + 2,
+                "日期": str(row_padded[0]).strip(),
+                "類型": str(row_padded[1]).strip(),
+                "分類": str(row_padded[2]).strip(),
+                "金額": str(row_padded[3]).strip(),
+                "付款方式": str(row_padded[4]).strip(),
+                "備註": str(row_padded[5]).strip()
+            })
             
-        if "日期" in df_temp.columns:
+        df_temp = pd.DataFrame(data_rows)
+        
+        if not df_temp.empty and "日期" in df_temp.columns:
             clean_dates = df_temp["日期"].str.replace("/", "-")
             parsed = pd.to_datetime(clean_dates, errors="coerce")
             df_temp["年月"] = parsed.dt.strftime("%Y-%m")
@@ -152,7 +163,7 @@ def fetch_data_v31(_sh):
         st.error(f"資料讀取錯誤：{e}")
         return pd.DataFrame()
 
-df = fetch_data_v31(sh)
+df = fetch_data_v32(sh)
 
 if sh:
     if not df.empty and "金額" in df.columns:
@@ -181,7 +192,7 @@ if sh:
                 try:
                     row = [str(tx_date), tx_type, category, str(amount), pay_method, note]
                     worksheet.append_row(row)
-                    fetch_data_v31.clear()
+                    fetch_data_v32.clear()
                     st.success("一般記帳新增成功！")
                     st.rerun()
                 except Exception as e:
@@ -196,7 +207,7 @@ if sh:
             try:
                 salary_row = [str(salary_date), "收入", "薪資", str(default_salary), "現金", "每月固定薪資"]
                 worksheet.append_row(salary_row)
-                fetch_data_v31.clear()
+                fetch_data_v32.clear()
                 st.sidebar.success(f"成功入帳薪資 ${default_salary:,}！")
                 st.rerun()
             except Exception as e:
@@ -223,7 +234,7 @@ if sh:
             try:
                 expense_row = [str(expense_date), "支出", "每月固定費用", str(default_expense), expense_pay, expense_note]
                 worksheet.append_row(expense_row)
-                fetch_data_v31.clear()
+                fetch_data_v32.clear()
                 st.sidebar.success(f"成功記錄固定支出 【{expense_note}】 ${default_expense:,}！")
                 st.rerun()
             except Exception as e:
@@ -305,43 +316,12 @@ if sh:
     # --- 模式 1: 記帳明細列表 ---
     if view_mode == "📋 記帳明細列表":
         st.subheader(f"📋 {selected_month} 記帳明細列表")
-        
-        # 🔥 新增：網頁專屬「指定金額快速清除工具」
-        with st.expander("🛠️ 快速清除錯誤交易小工具 (免勾選直接刪除)"):
-            target_amt_to_del = st.text_input("輸入要刪除的金額 (例如: 301 或 2005 或 %amount1)")
-            if st.button("🚀 執行精準刪除此金額"):
-                if target_amt_to_del:
-                    try:
-                        fresh_raw = worksheet.get_all_values()
-                        if len(fresh_raw) > 1:
-                            fresh_rows = fresh_raw[1:]
-                            deleted_count = 0
-                            # 由後往前刪除避免行號位移
-                            for i in range(len(fresh_rows) - 1, -1, -1):
-                                row = fresh_rows[i]
-                                row_padded = row + [""] * (6 - len(row))
-                                # 檢查金額欄位（通常是索引 3）是否符合
-                                if target_amt_to_del.strip() in [str(cell).strip() for cell in row_padded]:
-                                    worksheet.delete_rows(i + 2)
-                                    deleted_count += 1
-                            
-                            fetch_data_v31.clear()
-                            if deleted_count > 0:
-                                st.success(f"成功從雲端刪除了 {deleted_count} 筆符合「{target_amt_to_del}」的記錄！")
-                                st.rerun()
-                            else:
-                                st.warning("找不到符合該金額或內容的記錄，請再確認一次！")
-                    except Exception as e:
-                        st.error(f"刪除失敗：{e}")
-                else:
-                    st.warning("請先輸入要刪除的金額或代碼！")
-
         if not df_selected.empty:
             df_display = df_selected.copy()
-            if "年月" in df_display.columns:
-                df_display = df_display.drop(columns=["年月"])
-            if "金額_num" in df_display.columns:
-                df_display = df_display.drop(columns=["金額_num"])
+            # 移除不需要直接顯示在表格裡的後端管理欄位
+            for col in ["excel_row", "年月", "金額_num"]:
+                if col in df_display.columns:
+                    df_display = df_display.drop(columns=[col])
                 
             df_display.insert(0, "刪除", False)
             
@@ -368,39 +348,17 @@ if sh:
                     rows_to_delete = edited_df[edited_df["刪除"] == True].index.tolist()
                     if rows_to_delete:
                         try:
-                            fresh_raw = worksheet.get_all_values()
-                            if len(fresh_raw) > 1:
-                                fresh_rows = fresh_raw[1:]
-                            else:
-                                fresh_rows = []
-                                
-                            targets_to_remove = []
+                            # 收集所選項目的真實雲端 Excel 行號，並由大到小排序（由後往前刪除才不會亂）
+                            excel_rows_to_remove = []
                             for r_idx in rows_to_delete:
-                                t_row = df_selected.iloc[r_idx]
-                                targets_to_remove.append({
-                                    "日期": str(t_row["日期"]).strip(),
-                                    "類型": str(t_row["類型"]).strip(),
-                                    "分類": str(t_row["分類"]).strip(),
-                                    "金額": str(t_row["金額"]).strip(),
-                                    "付款方式": str(t_row["付款方式"]).strip(),
-                                    "備註": str(t_row["備註"]).strip()
-                                })
+                                target_excel_row = df_selected.iloc[r_idx]["excel_row"]
+                                excel_rows_to_remove.append(target_excel_row)
                             
-                            for target in targets_to_remove:
-                                for i in range(len(fresh_rows) - 1, -1, -1):
-                                    row = fresh_rows[i]
-                                    row_padded = row + [""] * (6 - len(row))
-                                    if (row_padded[0].strip() == target["日期"] and
-                                        row_padded[1].strip() == target["類型"] and
-                                        row_padded[2].strip() == target["分類"] and
-                                        row_padded[3].strip() == target["金額"] and
-                                        row_padded[4].strip() == target["付款方式"] and
-                                        row_padded[5].strip() == target["備註"]):
-                                        worksheet.delete_rows(i + 2)
-                                        break
-                                        
-                            fetch_data_v31.clear()
-                            st.success("已成功從 Google 試算表刪除選取的項目！")
+                            for r_num in sorted(excel_rows_to_remove, reverse=True):
+                                worksheet.delete_rows(r_num)
+                                
+                            fetch_data_v32.clear()
+                            st.success("已成功透過勾選從 Google 試算表刪除選取的項目！")
                             st.rerun()
                         except Exception as e:
                             st.error(f"刪除失敗：{e}")
@@ -412,14 +370,16 @@ if sh:
                     try:
                         save_df = edited_df.drop(columns=["刪除"])
                         save_df = save_df.fillna("")
-                        other_df = df[df["年月"] != selected_month].drop(columns=["年月", "金額_num"], errors="ignore")
+                        
+                        # 組合所有資料（保留其他月份，更新目前月份）
+                        other_df = df[df["年月"] != selected_month][["日期", "類型", "分類", "金額", "付款方式", "備註"]]
                         final_save_df = pd.concat([other_df, save_df], ignore_index=True)
                         
-                        new_data = [final_save_df.columns.values.tolist()] + final_save_df.values.tolist()
+                        new_data = [["日期", "類型", "分類", "金額", "付款方式", "備註"]] + final_save_df.values.tolist()
                         worksheet.clear()
                         worksheet.update(range_name="A1", values=new_data)
                         
-                        fetch_data_v31.clear()
+                        fetch_data_v32.clear()
                         st.success("修改已成功同步至 Google 試算表！")
                         st.rerun()
                     except Exception as e:
