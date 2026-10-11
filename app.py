@@ -1,5 +1,7 @@
+import hmac
 import html
 import re
+import time
 import calendar as py_calendar
 from datetime import date
 
@@ -21,6 +23,8 @@ EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "每月固定費用", "�
 INCOME_CATS = ["薪資", "其他收入"]
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
 SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式"]
+BUDGET_HEADER = ["分類", "每月上限"]
+TOTAL_KEY = "總預算"
 
 
 def _ver_tuple():
@@ -66,6 +70,57 @@ st.markdown("""
     .cal-note { font-size: 13px; opacity: 0.75; }
 </style>
 """, unsafe_allow_html=True)
+
+# ======================= 密碼登入 =======================
+# 密碼只存在「伺服器端」的 Streamlit Secrets（APP_PASSWORD）：
+# 不在程式碼裡、不會傳到瀏覽器，用 F12 看不到；比對也是在伺服器上完成。
+MAX_FAILS = 5
+LOCK_SECONDS = 300
+
+
+@st.cache_resource
+def _login_tracker():
+    # 全站共用的失敗計數（重新整理頁面也無法重置）
+    return {"fails": 0, "locked_until": 0.0}
+
+
+def require_login():
+    expected = str(st.secrets.get("APP_PASSWORD", ""))
+    if not expected:
+        st.error("尚未設定 APP_PASSWORD，為了安全程式已停止。請到 Streamlit Secrets 加入：APP_PASSWORD = 「你的密碼」")
+        st.stop()
+    if st.session_state.get("authed"):
+        return
+
+    tracker = _login_tracker()
+    st.title("🔒 我是有錢人")
+    wait = tracker["locked_until"] - time.time()
+    if wait > 0:
+        st.error(f"錯誤次數過多，請 {int(wait // 60) + 1} 分鐘後再試。")
+        st.stop()
+
+    with st.form("login_form"):
+        pwd = st.text_input("請輸入密碼", type="password")
+        submitted = st.form_submit_button("登入")
+
+    if submitted:
+        if hmac.compare_digest(pwd.encode("utf-8"), expected.encode("utf-8")):
+            tracker["fails"] = 0
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            tracker["fails"] += 1
+            if tracker["fails"] >= MAX_FAILS:
+                tracker["locked_until"] = time.time() + LOCK_SECONDS
+                tracker["fails"] = 0
+                st.error("錯誤次數過多，已暫時鎖定 5 分鐘。")
+            else:
+                time.sleep(1)  # 拖慢暴力猜測
+                st.error(f"密碼錯誤（還有 {MAX_FAILS - tracker['fails']} 次機會）")
+    st.stop()
+
+
+require_login()
 
 # 操作成功訊息（rerun 後仍能顯示）
 if "flash" in st.session_state:
@@ -169,6 +224,81 @@ settings_rows = fetch_settings_rows(settings_ws)
 fixed_templates = build_templates(settings_rows)
 
 
+# ======================= 預算設定 =======================
+@st.cache_resource
+def get_budget_worksheet(_sh):
+    if not _sh:
+        return None
+    try:
+        return _sh.worksheet("預算設定")
+    except gspread.WorksheetNotFound:
+        ws = _sh.add_worksheet(title="預算設定", rows=50, cols=2)
+        ws.append_row(BUDGET_HEADER)
+        ws.append_row([TOTAL_KEY, 30000])
+        ws.append_row(["伙食", 8000])
+        return ws
+
+
+try:
+    budget_ws = get_budget_worksheet(sh) if sh else None
+except Exception as e:
+    budget_ws = None
+    st.warning(f"無法取得「預算設定」分頁：{e}")
+
+
+@st.cache_data(ttl=300)
+def fetch_budget_rows(_budget_ws):
+    if not _budget_ws:
+        return []
+    try:
+        data = _budget_ws.get_all_values()
+        rows = [pad_row(r, 2) for r in data[1:]]
+        return [r for r in rows if str(r[0]).strip()]
+    except Exception:
+        return []
+
+
+def build_budgets(rows):
+    budgets = {}
+    for name, val in rows:
+        try:
+            amt = float(str(val).strip().replace(",", ""))
+        except ValueError:
+            continue
+        if amt > 0:
+            budgets[str(name).strip()] = amt
+    return budgets
+
+
+budget_rows = fetch_budget_rows(budget_ws)
+budgets = build_budgets(budget_rows)
+
+
+def render_budget_banner(df_month, total_spent, budgets, month_label):
+    limit = budgets.get(TOTAL_KEY)
+    if limit:
+        ratio = total_spent / limit
+        st.progress(
+            float(min(ratio, 1.0)),
+            text=f"🎯 {month_label} 總預算已使用 {ratio:.0%}（${total_spent:,.0f} / ${limit:,.0f}）",
+        )
+        if ratio >= 1:
+            st.error(f"⚠️ 已超出總預算 ${total_spent - limit:,.0f}！")
+        elif ratio >= 0.8:
+            st.warning(f"⚡ 已使用 {ratio:.0%}，本月只剩 ${limit - total_spent:,.0f}。")
+
+    over = []
+    exp = df_month[df_month["類型"] == "支出"]
+    for cat, lim in budgets.items():
+        if cat == TOTAL_KEY:
+            continue
+        spent = exp.loc[exp["分類"] == cat, "金額_num"].sum()
+        if spent >= lim:
+            over.append(f"{cat}（${spent:,.0f} / ${lim:,.0f}）")
+    if over:
+        st.error("⚠️ 以下分類已超出預算：" + "、".join(over))
+
+
 # ======================= 讀取記帳主表 =======================
 DF_COLS = ["_row"] + FIELDS + ["年月", "日期_std", "金額_num"]
 
@@ -238,8 +368,12 @@ if sh and worksheet:
     df = fetch_data(sh)
 
     # ---------- 側邊欄：新增記帳 ----------
+    if st.sidebar.button("🚪 登出"):
+        st.session_state.clear()
+        st.rerun()
+
     st.sidebar.header("➕ 新增記帳")
-    tab_general, tab_salary, tab_fixed = st.sidebar.tabs(["一般", "💰薪資", "🏠固定支出"])
+    tab_general, tab_salary, tab_fixed, tab_budget = st.sidebar.tabs(["一般", "💰薪資", "🏠固定", "🎯預算"])
 
     with tab_general:
         tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
@@ -327,6 +461,43 @@ if sh and worksheet:
                     except Exception as e:
                         st.sidebar.error(f"儲存失敗: {e}")
 
+    with tab_budget:
+        st.caption("設定每月支出上限。「總預算」是整個月的上限，也可以替個別分類另外設定。")
+        if budget_ws:
+            df_budget = pd.DataFrame(budget_rows, columns=BUDGET_HEADER)
+            df_budget["每月上限"] = pd.to_numeric(
+                df_budget["每月上限"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+            )
+            edited_budget = st.data_editor(
+                df_budget,
+                num_rows="dynamic",
+                hide_index=True,
+                key="budget_editor",
+                column_config={
+                    "分類": st.column_config.SelectboxColumn(
+                        "分類", options=[TOTAL_KEY] + EXPENSE_CATS, required=True
+                    ),
+                    "每月上限": st.column_config.NumberColumn("每月上限", min_value=0, step=500, format="%d"),
+                },
+                **STRETCH,
+            )
+            if st.button("💾 儲存預算"):
+                try:
+                    clean_b = edited_budget.dropna(subset=["分類", "每月上限"])
+                    clean_b = clean_b[clean_b["分類"].astype(str).str.strip() != ""]
+                    clean_b = clean_b.drop_duplicates(subset="分類", keep="last")
+                    new_data = [BUDGET_HEADER] + [
+                        [str(a).strip(), to_number(b)] for a, b in clean_b.itertuples(index=False)
+                    ]
+                    old_len = len(budget_ws.get_all_values())
+                    budget_ws.update(range_name="A1", values=new_data)
+                    if old_len > len(new_data):
+                        budget_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
+                    fetch_budget_rows.clear()
+                    flash_and_rerun("預算已儲存！")
+                except Exception as e:
+                    st.sidebar.error(f"預算儲存失敗: {e}")
+
     # ---------- 月份篩選 ----------
     current_month_str = date.today().strftime("%Y-%m")
     if not df.empty:
@@ -352,11 +523,13 @@ if sh and worksheet:
     col_m2.metric(f"📉 {selected_month} 總花費", f"${int(total_expense):,}")
     col_m3.metric(f"💰 {selected_month} 本月結餘", f"${int(net_balance):,}")
 
+    render_budget_banner(df_selected, total_expense, budgets, selected_month)
+
     st.divider()
 
     view_mode = st.radio(
         "選擇檢視模式：",
-        ["📋 記帳明細列表", "📊 圖表與固定費用", "📅 月曆模式"],
+        ["📋 記帳明細列表", "📊 圖表與固定費用", "🎯 預算追蹤", "📅 月曆模式"],
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -501,7 +674,40 @@ if sh and worksheet:
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
-    # ---------- 模式 3：月曆 ----------
+    # ---------- 模式 3：預算追蹤 ----------
+    elif view_mode == "🎯 預算追蹤":
+        st.subheader(f"🎯 {selected_month} 預算追蹤")
+        if not budgets:
+            st.info("尚未設定預算，請到左側「🎯預算」分頁設定。")
+        else:
+            exp_df = df_selected[df_selected["類型"] == "支出"]
+            items = []
+            if TOTAL_KEY in budgets:
+                items.append((TOTAL_KEY, total_expense))
+            for cat in budgets:
+                if cat != TOTAL_KEY:
+                    items.append((cat, exp_df.loc[exp_df["分類"] == cat, "金額_num"].sum()))
+
+            for name, spent in items:
+                limit = budgets[name]
+                ratio = spent / limit
+                left = limit - spent
+                left_txt = f"剩餘 ${left:,.0f}" if left >= 0 else f"超支 ${-left:,.0f}"
+                icon = "🔴" if ratio >= 1 else ("🟠" if ratio >= 0.8 else "🟢")
+                st.markdown(f"{icon} **{name}**　${spent:,.0f} / ${limit:,.0f}　（{left_txt}）")
+                st.progress(float(min(ratio, 1.0)), text=f"{ratio:.0%}")
+
+            if selected_month == current_month_str and TOTAL_KEY in budgets:
+                y, m = map(int, selected_month.split("-"))
+                days_left = py_calendar.monthrange(y, m)[1] - date.today().day + 1
+                remain = budgets[TOTAL_KEY] - total_expense
+                st.divider()
+                if remain > 0:
+                    st.info(f"💡 本月還有 {days_left} 天（含今天），平均每天可花 ${remain / days_left:,.0f}")
+                else:
+                    st.warning("💡 本月總預算已用完，建議接下來盡量不要再花錢。")
+
+    # ---------- 模式 4：月曆 ----------
     elif view_mode == "📅 月曆模式":
         st.subheader(f"📅 {selected_month} 日曆視圖")
 
