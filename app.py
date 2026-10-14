@@ -76,6 +76,7 @@ st.markdown("""
 # 不在程式碼裡、不會傳到瀏覽器，用 F12 看不到；比對也是在伺服器上完成。
 MAX_FAILS = 5
 LOCK_SECONDS = 300
+IDLE_SECONDS = 1800  # 閒置 30 分鐘自動登出
 
 
 @st.cache_resource
@@ -90,13 +91,18 @@ def require_login():
         st.error("尚未設定 APP_PASSWORD，為了安全程式已停止。請到 Streamlit Secrets 加入：APP_PASSWORD = 「你的密碼」")
         st.stop()
     if st.session_state.get("authed"):
-        return
+        if time.time() - st.session_state.get("last_active", 0) > IDLE_SECONDS:
+            st.session_state.clear()
+            st.warning("⏱️ 閒置過久，已自動登出，請重新登入。")
+        else:
+            st.session_state["last_active"] = time.time()
+            return
 
     tracker = _login_tracker()
     st.title("🔒 我是有錢人")
     wait = tracker["locked_until"] - time.time()
     if wait > 0:
-        st.error(f"錯誤次數過多，請 {int(wait // 60) + 1} 分鐘後再試。")
+        st.error(f"錯誤次數過多，請 {int(wait // 60)} 分 {int(wait % 60)} 秒後再試。")
         st.stop()
 
     with st.form("login_form"):
@@ -107,6 +113,7 @@ def require_login():
         if hmac.compare_digest(pwd.encode("utf-8"), expected.encode("utf-8")):
             tracker["fails"] = 0
             st.session_state["authed"] = True
+            st.session_state["last_active"] = time.time()
             st.rerun()
         else:
             tracker["fails"] += 1
@@ -492,10 +499,10 @@ if sh and worksheet:
     with tab_general:
         tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
         category = st.selectbox("分類", EXPENSE_CATS if tx_type == "支出" else INCOME_CATS)
-        amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...")
+        amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
         pay_method = st.selectbox("付款方式", PAY_OPTIONS)
         tx_date = st.date_input("日期", value=date.today())
-        note = st.text_input("備註 (例如：鮮天下、加油)")
+        note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
 
         if st.button("送出一般記帳"):
             if amount is not None and amount > 0:
@@ -719,6 +726,9 @@ if sh and worksheet:
         delta=f"{int(net_balance - prev_net):,}",
     )
 
+    if total_income > 0:
+        st.caption(f"💹 本月儲蓄率：{net_balance / total_income:.0%}（結餘 ÷ 收入）")
+
     render_budget_banner(df_selected, total_expense, budgets, selected_month)
 
     st.divider()
@@ -922,6 +932,16 @@ if sh and worksheet:
                     )
                     fig_bar.update_xaxes(type="category", categoryorder="category ascending")
                     st.plotly_chart(fig_bar, **STRETCH)
+                pay_sum = df_expense.groupby("付款方式", as_index=False)["金額_num"].sum()
+                pay_sum["付款方式"] = pay_sum["付款方式"].replace("", "未填")
+                st.plotly_chart(
+                    px.bar(
+                        pay_sum, x="付款方式", y="金額_num", text_auto=True,
+                        title=f"{selected_month} 各付款方式支出",
+                        labels={"金額_num": "金額"},
+                    ),
+                    **STRETCH,
+                )
             else:
                 st.info("此月份尚無支出紀錄可產出圖表。")
 
