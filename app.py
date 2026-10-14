@@ -13,9 +13,8 @@ import streamlit as st
 # ======================= 基本設定 =======================
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
-# 試算表網址：建議放進 Streamlit Secrets（SPREADSHEET_URL = "..."），沒設定時使用下面的預設值
-DEFAULT_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1DTNSXJUJE_7PQIi5yebsmt_mC8bIe1D82IF2FgDaPyM/edit?gid=0#gid=0"
-SPREADSHEET_URL = st.secrets.get("SPREADSHEET_URL", DEFAULT_SPREADSHEET_URL)
+# 試算表網址：只從 Streamlit Secrets 讀取（SPREADSHEET_URL = "..."），不再把網址寫在程式碼裡
+SPREADSHEET_URL = str(st.secrets.get("SPREADSHEET_URL", "")).strip()
 
 # 統一的選項清單
 PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
@@ -152,10 +151,21 @@ def flash_and_rerun(msg):
     st.rerun()
 
 
+def safe_load(fn, arg, default, label):
+    """讀取失敗時顯示錯誤並回傳預設值（失敗的結果不會被快取，下次操作會自動重試）"""
+    try:
+        return fn(arg)
+    except Exception as e:
+        st.warning(f"讀取「{label}」失敗：{e}（可按左側「🔄 重新整理資料」重試）")
+        return default
+
+
 # ======================= 連線 Google 試算表 =======================
 @st.cache_resource
 def get_google_sheet():
     # 失敗時直接丟出例外，cache_resource 不會把失敗結果存起來，下次會自動重試
+    if not SPREADSHEET_URL:
+        raise ValueError("尚未設定 SPREADSHEET_URL，請到 Streamlit Secrets 加入：SPREADSHEET_URL = \"你的試算表網址\"")
     info = dict(st.secrets["gcp_service_account"])
     info["private_key"] = info["private_key"].replace("\\n", "\n")
     info.setdefault("universe_domain", "googleapis.com")
@@ -195,14 +205,11 @@ except Exception as e:
 
 @st.cache_data(ttl=300)
 def fetch_settings_rows(_settings_ws):
-    """固定支出設定（含快取，寫入後記得 .clear()）"""
+    """固定支出設定（含快取，寫入後記得 .clear()）。失敗時直接丟出例外，不會被快取。"""
     if not _settings_ws:
         return []
-    try:
-        data = _settings_ws.get_all_values()
-        return [pad_row(r, 3) for r in data[1:] if any(str(c).strip() for c in r)]
-    except Exception:
-        return []
+    data = _settings_ws.get_all_values()
+    return [pad_row(r, 3) for r in data[1:] if any(str(c).strip() for c in r)]
 
 
 def build_templates(rows):
@@ -220,7 +227,7 @@ def build_templates(rows):
     return templates
 
 
-settings_rows = fetch_settings_rows(settings_ws)
+settings_rows = safe_load(fetch_settings_rows, settings_ws, [], "固定支出設定")
 fixed_templates = build_templates(settings_rows)
 
 
@@ -248,14 +255,12 @@ except Exception as e:
 
 @st.cache_data(ttl=300)
 def fetch_budget_rows(_budget_ws):
+    """預算設定（失敗時直接丟出例外，不會被快取）"""
     if not _budget_ws:
         return []
-    try:
-        data = _budget_ws.get_all_values()
-        rows = [pad_row(r, 2) for r in data[1:]]
-        return [r for r in rows if str(r[0]).strip()]
-    except Exception:
-        return []
+    data = _budget_ws.get_all_values()
+    rows = [pad_row(r, 2) for r in data[1:]]
+    return [r for r in rows if str(r[0]).strip()]
 
 
 def build_budgets(rows):
@@ -270,7 +275,7 @@ def build_budgets(rows):
     return budgets
 
 
-budget_rows = fetch_budget_rows(budget_ws)
+budget_rows = safe_load(fetch_budget_rows, budget_ws, [], "預算設定")
 budgets = build_budgets(budget_rows)
 
 
@@ -305,48 +310,50 @@ DF_COLS = ["_row"] + FIELDS + ["年月", "日期_std", "金額_num"]
 
 @st.cache_data(ttl=300)
 def fetch_data(_sh):
+    """讀取記帳主表。讀取失敗時直接丟出例外（失敗結果不會被快取 5 分鐘）。"""
     if not _sh:
         return pd.DataFrame(columns=DF_COLS)
-    try:
-        ws = _sh.get_worksheet(0)
-        raw_data = ws.get_all_values()
-        if len(raw_data) < 2:
-            return pd.DataFrame(columns=DF_COLS)
-
-        rows = []
-        for r_idx, row in enumerate(raw_data[1:]):
-            p = pad_row(row)
-            if not any(str(c).strip() for c in p):
-                continue  # 空白列略過（但列號仍照實際位置計算）
-            rec = {"_row": r_idx + 2}  # 試算表實際列號（標題為第 1 列）
-            for name, val in zip(FIELDS, p):
-                rec[name] = str(val).strip()
-            rows.append(rec)
-
-        df_t = pd.DataFrame(rows)
-        if df_t.empty:
-            return pd.DataFrame(columns=DF_COLS)
-
-        clean = df_t["日期"].str.replace("/", "-", regex=False)
-        parsed = pd.to_datetime(clean, errors="coerce")
-        df_t["年月"] = parsed.dt.strftime("%Y-%m")
-        df_t["日期_std"] = parsed.dt.strftime("%Y-%m-%d")
-        bad = df_t["年月"].isna()
-        if bad.any():
-            df_t.loc[bad, "年月"] = clean[bad].str.slice(0, 7)
-            df_t.loc[bad, "日期_std"] = clean[bad]
-        df_t["金額_num"] = pd.to_numeric(
-            df_t["金額"].str.replace(",", "", regex=False), errors="coerce"
-        ).fillna(0)
-        return df_t
-    except Exception as e:
-        st.error(f"資料讀取錯誤：{e}")
+    ws = _sh.get_worksheet(0)
+    raw_data = ws.get_all_values()
+    if len(raw_data) < 2:
         return pd.DataFrame(columns=DF_COLS)
+
+    rows = []
+    for r_idx, row in enumerate(raw_data[1:]):
+        p = pad_row(row)
+        if not any(str(c).strip() for c in p):
+            continue  # 空白列略過（但列號仍照實際位置計算）
+        rec = {"_row": r_idx + 2}  # 試算表實際列號（標題為第 1 列）
+        for name, val in zip(FIELDS, p):
+            rec[name] = str(val).strip()
+        rows.append(rec)
+
+    df_t = pd.DataFrame(rows)
+    if df_t.empty:
+        return pd.DataFrame(columns=DF_COLS)
+
+    clean = df_t["日期"].str.replace("/", "-", regex=False)
+    parsed = pd.to_datetime(clean, errors="coerce")
+    df_t["年月"] = parsed.dt.strftime("%Y-%m")
+    df_t["日期_std"] = parsed.dt.strftime("%Y-%m-%d")
+    bad = df_t["年月"].isna()
+    if bad.any():
+        df_t.loc[bad, "年月"] = clean[bad].str.slice(0, 7)
+        df_t.loc[bad, "日期_std"] = clean[bad]
+    df_t["金額_num"] = pd.to_numeric(
+        df_t["金額"].str.replace(",", "", regex=False), errors="coerce"
+    ).fillna(0)
+    return df_t
+
+
+def bump_editor():
+    """讓所有 data_editor 換一個新的 key，清掉舊的編輯狀態（避免儲存後重複新增或顯示錯亂）"""
+    st.session_state.editor_ver += 1
 
 
 def clear_data_cache():
     fetch_data.clear()
-    st.session_state.editor_ver += 1
+    bump_editor()
 
 
 def rows_still_match(ws, df_rows):
@@ -363,12 +370,53 @@ def rows_still_match(ws, df_rows):
     return True
 
 
+def validate_row(r):
+    """檢查單列資料。回傳 (錯誤清單, 整理後可寫入的一列資料)"""
+    errs = []
+
+    d = str(r["日期"]).strip().replace("/", "-")
+    date_ok = ""
+    if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", d):
+        parsed = pd.to_datetime(d, errors="coerce")
+        if not pd.isna(parsed):
+            date_ok = parsed.strftime("%Y-%m-%d")
+    if not date_ok:
+        errs.append("日期格式需為 YYYY-MM-DD（例如 2026-10-14）")
+
+    typ = str(r["類型"]).strip()
+    cat = str(r["分類"]).strip()
+    if typ not in ("支出", "收入"):
+        errs.append("類型必須是「支出」或「收入」")
+    else:
+        allowed = EXPENSE_CATS if typ == "支出" else INCOME_CATS
+        if cat not in allowed:
+            errs.append(f"「{typ}」的分類必須是：{'、'.join(allowed)}")
+
+    amt = to_number(r["金額"])
+    if isinstance(amt, str) or amt <= 0:
+        errs.append("金額必須是大於 0 的數字")
+
+    pay = str(r["付款方式"]).strip()
+    if pay and pay not in PAY_OPTIONS:
+        errs.append(f"付款方式必須是：{'、'.join(PAY_OPTIONS)}")
+
+    return errs, [date_ok, typ, cat, amt, pay, str(r["備註"])]
+
+
 # ======================= 主程式 =======================
 if sh and worksheet:
-    df = fetch_data(sh)
+    df = safe_load(fetch_data, sh, pd.DataFrame(columns=DF_COLS), "記帳資料")
+    ver = st.session_state.editor_ver
 
     # ---------- 側邊欄：新增記帳 ----------
-    if st.sidebar.button("🚪 登出"):
+    side_c1, side_c2 = st.sidebar.columns(2)
+    if side_c1.button("🔄 重新整理資料"):
+        fetch_data.clear()
+        fetch_settings_rows.clear()
+        fetch_budget_rows.clear()
+        bump_editor()
+        st.rerun()
+    if side_c2.button("🚪 登出"):
         st.session_state.clear()
         st.rerun()
 
@@ -400,16 +448,31 @@ if sh and worksheet:
     with tab_salary:
         default_salary = st.number_input("預設月薪金額", value=45000, step=1000)
         salary_date = st.date_input("入帳日期", value=date.today(), key="sal_date")
+
+        # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
+        salary_dup = False
+        if not df.empty:
+            salary_dup = bool(
+                ((df["年月"] == salary_date.strftime("%Y-%m")) & (df["分類"] == "薪資")).any()
+            )
+        allow_salary_dup = True
+        if salary_dup:
+            st.warning(f"⚠️ {salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
+            allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
+
         if st.button("📥 一鍵入帳本月薪資"):
-            try:
-                worksheet.append_row(
-                    [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
-                    value_input_option="RAW",
-                )
-                clear_data_cache()
-                flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
-            except Exception as e:
-                st.sidebar.error(f"薪資入帳失敗: {e}")
+            if not allow_salary_dup:
+                st.sidebar.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
+            else:
+                try:
+                    worksheet.append_row(
+                        [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
+                        value_input_option="RAW",
+                    )
+                    clear_data_cache()
+                    flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
+                except Exception as e:
+                    st.sidebar.error(f"薪資入帳失敗: {e}")
 
     with tab_fixed:
         if fixed_templates:
@@ -425,16 +488,34 @@ if sh and worksheet:
         expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
         expense_date = st.date_input("扣款日期", value=date.today(), key="exp_date")
 
+        # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
+        fixed_dup = False
+        if not df.empty:
+            fixed_dup = bool(
+                (
+                    (df["年月"] == expense_date.strftime("%Y-%m"))
+                    & (df["分類"] == "每月固定費用")
+                    & (df["備註"] == expense_note.strip())
+                ).any()
+            )
+        allow_fixed_dup = True
+        if fixed_dup:
+            st.warning(f"⚠️ {expense_date.strftime('%Y-%m')} 已經記錄過【{expense_note.strip()}】了。")
+            allow_fixed_dup = st.checkbox("我確定要再扣一次", key=f"allow_fix_dup_{ver}")
+
         if st.button("📤 一鍵扣款固定支出"):
-            try:
-                worksheet.append_row(
-                    [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
-                    value_input_option="RAW",
-                )
-                clear_data_cache()
-                flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
-            except Exception as e:
-                st.sidebar.error(f"支出記錄失敗: {e}")
+            if not allow_fixed_dup:
+                st.sidebar.warning("本月已有相同項目，請先勾選「我確定要再扣一次」。")
+            else:
+                try:
+                    worksheet.append_row(
+                        [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
+                        value_input_option="RAW",
+                    )
+                    clear_data_cache()
+                    flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
+                except Exception as e:
+                    st.sidebar.error(f"支出記錄失敗: {e}")
 
         st.divider()
         with st.expander("⚙️ 線上修改或新增固定支出清單"):
@@ -443,7 +524,7 @@ if sh and worksheet:
                 edited_settings = st.data_editor(
                     df_settings,
                     num_rows="dynamic",
-                    key="settings_editor",
+                    key=f"settings_editor_{ver}",
                     **STRETCH,
                 )
                 if st.button("💾 儲存範本修改"):
@@ -457,6 +538,7 @@ if sh and worksheet:
                         if old_len > len(new_data):
                             settings_ws.batch_clear([f"A{len(new_data) + 1}:C{old_len}"])
                         fetch_settings_rows.clear()
+                        bump_editor()
                         flash_and_rerun("固定支出範本已成功更新！")
                     except Exception as e:
                         st.sidebar.error(f"儲存失敗: {e}")
@@ -472,7 +554,7 @@ if sh and worksheet:
                 df_budget,
                 num_rows="dynamic",
                 hide_index=True,
-                key="budget_editor",
+                key=f"budget_editor_{ver}",
                 column_config={
                     "分類": st.column_config.SelectboxColumn(
                         "分類", options=[TOTAL_KEY] + EXPENSE_CATS, required=True
@@ -494,6 +576,7 @@ if sh and worksheet:
                     if old_len > len(new_data):
                         budget_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
                     fetch_budget_rows.clear()
+                    bump_editor()
                     flash_and_rerun("預算已儲存！")
                 except Exception as e:
                     st.sidebar.error(f"預算儲存失敗: {e}")
@@ -545,7 +628,7 @@ if sh and worksheet:
             edited_df = st.data_editor(
                 df_display,
                 hide_index=True,
-                key=f"expense_table_{st.session_state.editor_ver}",
+                key=f"expense_table_{ver}",
                 column_config={
                     "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
                     "日期": st.column_config.TextColumn("日期", width="small"),
@@ -592,7 +675,7 @@ if sh and worksheet:
                         except Exception as e:
                             st.error(f"刪除失敗：{e}")
 
-            # 儲存：只更新「有被修改的列」，不動其他月份、不改變順序
+            # 儲存：只更新「有被修改的列」，不動其他月份、不改變順序（儲存前會先檢查格式）
             with col2:
                 if st.button("💾 儲存修改內容"):
                     try:
@@ -604,24 +687,31 @@ if sh and worksheet:
                         ]
                         if not changed_idx:
                             st.info("沒有偵測到任何修改。")
-                        elif not rows_still_match(worksheet, df_selected.loc[changed_idx]):
-                            st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
-                            fetch_data.clear()
                         else:
-                            updates = []
+                            # 1) 格式檢查：有任何問題就整批不儲存，並指出是哪一列
+                            error_lines = []
+                            cleaned = {}
                             for i in changed_idx:
+                                errs, clean_row = validate_row(save_df.loc[i])
                                 n = int(df_selected.loc[i, "_row"])
-                                r = save_df.loc[i]
-                                updates.append({
-                                    "range": f"A{n}:F{n}",
-                                    "values": [[
-                                        r["日期"].strip(), r["類型"].strip(), r["分類"].strip(),
-                                        to_number(r["金額"]), r["付款方式"].strip(), r["備註"],
-                                    ]],
-                                })
-                            worksheet.batch_update(updates, value_input_option="RAW")
-                            clear_data_cache()
-                            flash_and_rerun(f"已同步 {len(changed_idx)} 筆修改到 Google 試算表！")
+                                if errs:
+                                    error_lines.append(f"**試算表第 {n} 列**：" + "；".join(errs))
+                                else:
+                                    cleaned[i] = (n, clean_row)
+
+                            if error_lines:
+                                st.error("以下資料格式有問題，尚未儲存：\n\n" + "\n\n".join(error_lines))
+                            elif not rows_still_match(worksheet, df_selected.loc[changed_idx]):
+                                st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
+                                fetch_data.clear()
+                            else:
+                                updates = [
+                                    {"range": f"A{n}:F{n}", "values": [clean_row]}
+                                    for n, clean_row in cleaned.values()
+                                ]
+                                worksheet.batch_update(updates, value_input_option="RAW")
+                                clear_data_cache()
+                                flash_and_rerun(f"已同步 {len(changed_idx)} 筆修改到 Google 試算表！")
                     except Exception as e:
                         st.error(f"儲存失敗：{e}")
         else:
