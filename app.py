@@ -307,19 +307,23 @@ def get_ws(title, rows, cols, init_rows):
         return None
 
 
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_rows(_ws, n):
+    # 讀取設定類分頁（跳過標題列與第一欄空白的列）。失敗時丟出例外，不會被快取；寫入後記得 fetch_rows.clear()
+    if not _ws:
+        return []
+    rows = [pad_row(r, n) for r in _ws.get_all_values()[1:]]
+    return [r for r in rows if str(r[0]).strip()]
+
+
+def load_rows(ws, n, label):
+    return safe_load(lambda w: fetch_rows(w, n), ws, [], label)
+
+
 settings_ws = get_ws(
     "固定支出設定", 100, 4,
     [SETTINGS_HEADER, ["孝親費", "5000", "現金", "5"], ["電信費", "599", "信用卡", "10"]],
 )
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_settings_rows(_settings_ws):
-    """固定支出設定（含快取，寫入後記得 .clear()）。失敗時直接丟出例外，不會被快取。"""
-    if not _settings_ws:
-        return []
-    data = _settings_ws.get_all_values()
-    return [pad_row(r, 4) for r in data[1:] if any(str(c).strip() for c in r)]
 
 
 def parse_day(v):
@@ -346,22 +350,12 @@ def build_templates(rows):
     return templates
 
 
-settings_rows = safe_load(fetch_settings_rows, settings_ws, [], "固定支出設定")
+settings_rows = load_rows(settings_ws, 4, "固定支出設定")
 fixed_templates = build_templates(settings_rows)
 
 
 # ======================= 預算設定 =======================
 budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_budget_rows(_budget_ws):
-    """預算設定（失敗時直接丟出例外，不會被快取）"""
-    if not _budget_ws:
-        return []
-    data = _budget_ws.get_all_values()
-    rows = [pad_row(r, 2) for r in data[1:]]
-    return [r for r in rows if str(r[0]).strip()]
 
 
 def build_budgets(rows):
@@ -376,24 +370,17 @@ def build_budgets(rows):
     return budgets
 
 
-budget_rows = safe_load(fetch_budget_rows, budget_ws, [], "預算設定")
+budget_rows = load_rows(budget_ws, 2, "預算設定")
 budgets = build_budgets(budget_rows)
 
 
 # ======================= 分類設定（從試算表讀取） =======================
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_category_rows(_ws):
-    if not _ws:
-        return []
-    return [pad_row(r, 2) for r in _ws.get_all_values()[1:]]
-
-
 cat_ws = get_ws(
     "分類設定", 100, 2,
     [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
 )
 
-_cat_rows = safe_load(fetch_category_rows, cat_ws, [], "分類設定")
+_cat_rows = load_rows(cat_ws, 2, "分類設定")
 _exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
 _inc = [c.strip() for t, c in _cat_rows if t.strip() == "收入" and c.strip()]
 if _exp:
@@ -434,17 +421,7 @@ def fetch_trash(_trash_ws):
 config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
 
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_config_rows(_config_ws):
-    # 失敗時直接丟出例外，不會被快取
-    if not _config_ws:
-        return []
-    data = _config_ws.get_all_values()
-    rows = [pad_row(r, 2) for r in data[1:]]
-    return [r for r in rows if str(r[0]).strip()]
-
-
-config_rows = safe_load(fetch_config_rows, config_ws, [], "系統設定")
+config_rows = load_rows(config_ws, 2, "系統設定")
 config = {str(r[0]).strip(): r[1] for r in config_rows}
 
 
@@ -461,7 +438,7 @@ def save_config(key, value):
             break
     else:
         config_ws.append_row([key, value])
-    fetch_config_rows.clear()
+    fetch_rows.clear()
 
 
 def render_budget_banner(df_month, total_spent, budgets, month_label):
@@ -570,6 +547,14 @@ def delete_rows(ws, row_nos):
     return len(nos)
 
 
+def already_recorded(df_all, ym, cat, note=None):
+    # 該月份是否已有這個分類（以及相同備註）的紀錄
+    m = (df_all["年月"] == ym) & (df_all["分類"] == cat)
+    if note is not None:
+        m &= df_all["備註"] == note.strip()
+    return bool(m.any())
+
+
 def pending_fixed(df_all, templates, ref_date):
     # 本月已到扣款日、但還沒記錄的固定支出（以「備註 = 項目名稱」判斷是否已記錄）
     ym = ref_date.strftime("%Y-%m")
@@ -635,14 +620,11 @@ if sh and worksheet:
             )
 
     # ---------- 側邊欄：新增記帳 ----------
-    side_c1, side_c2 = st.sidebar.columns(2)
+    side_c1, side_c2, _ = st.columns([1, 1, 4])
     if side_c1.button("🔄 重新整理資料"):
         fetch_data.clear()
-        fetch_settings_rows.clear()
-        fetch_budget_rows.clear()
-        fetch_category_rows.clear()
+        fetch_rows.clear()
         fetch_trash.clear()
-        fetch_config_rows.clear()
         bump_editor()
         st.rerun()
     if side_c2.button("🚪 登出"):
@@ -651,241 +633,9 @@ if sh and worksheet:
         st.session_state.update(clear_cookie=True, no_autologin=True)
         st.rerun()
 
-    st.sidebar.header("➕ 新增記帳")
-    tab_general, tab_salary, tab_fixed, tab_budget = st.sidebar.tabs(["一般", "💰薪資", "🏠固定", "🎯預算"])
-
-    with tab_general:
-        tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
-        category = st.selectbox("分類", EXPENSE_CATS if tx_type == "支出" else INCOME_CATS)
-        amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
-        pay_method = st.selectbox("付款方式", PAY_OPTIONS)
-        tx_date = st.date_input("日期", value=TODAY)
-        note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
-
-        if st.button("送出一般記帳"):
-            if amount is not None and amount > 0:
-                try:
-                    worksheet.append_row(
-                        [str(tx_date), tx_type, category, amount, pay_method, note],
-                        value_input_option="RAW",
-                    )
-                    clear_data_cache()
-                    flash_and_rerun("一般記帳新增成功！")
-                except Exception as e:
-                    st.sidebar.error(f"寫入失敗: {e}")
-            else:
-                st.sidebar.warning("請輸入有效的金額！")
-
-    with tab_salary:
-        default_salary = st.number_input(
-            "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
-        )
-        if config_ws and st.button("💾 記住為預設月薪"):
-            try:
-                save_config(CFG_SALARY, default_salary)
-                bump_editor()
-                flash_and_rerun("已更新預設月薪！")
-            except Exception as e:
-                st.sidebar.error(f"儲存失敗: {e}")
-        salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
-
-        # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
-        salary_dup = False
-        if not df.empty:
-            salary_dup = bool(
-                ((df["年月"] == salary_date.strftime("%Y-%m")) & (df["分類"] == "薪資")).any()
-            )
-        allow_salary_dup = True
-        if salary_dup:
-            st.warning(f"⚠️ {salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
-            allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
-
-        if st.button("📥 一鍵入帳本月薪資"):
-            if not allow_salary_dup:
-                st.sidebar.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
-            else:
-                try:
-                    worksheet.append_row(
-                        [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
-                        value_input_option="RAW",
-                    )
-                    clear_data_cache()
-                    flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
-                except Exception as e:
-                    st.sidebar.error(f"薪資入帳失敗: {e}")
-
-    with tab_fixed:
-        # 到期未記錄的固定支出（需先在下方清單設定「扣款日」）
-        pend = pending_fixed(df, fixed_templates, TODAY)
-        if pend:
-            lines = "\n".join(
-                f"- {n}　${t['amount']:,.0f}（{d.strftime('%m/%d')}）" for n, t, d in pend
-            )
-            st.info("📌 本月已到期、尚未記錄的固定支出：\n" + lines)
-            if st.button(f"⚡ 一鍵補登 {len(pend)} 筆"):
-                try:
-                    worksheet.append_rows(
-                        [
-                            [str(d), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], n]
-                            for n, t, d in pend
-                        ],
-                        value_input_option="RAW",
-                    )
-                    clear_data_cache()
-                    flash_and_rerun(f"已補登 {len(pend)} 筆固定支出！")
-                except Exception as e:
-                    st.sidebar.error(f"補登失敗: {e}")
-            st.divider()
-
-        if fixed_templates:
-            selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
-            default_val = fixed_templates[selected_template]
-        else:
-            selected_template = "無範本"
-            default_val = {"amount": 0, "pay": "現金"}
-
-        expense_note = st.text_input("支出項目名稱", value=selected_template)
-        default_expense = st.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
-        default_pay_idx = PAY_OPTIONS.index(default_val["pay"]) if default_val["pay"] in PAY_OPTIONS else 0
-        expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
-        expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
-
-        # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
-        fixed_dup = False
-        if not df.empty:
-            fixed_dup = bool(
-                (
-                    (df["年月"] == expense_date.strftime("%Y-%m"))
-                    & (df["分類"] == "每月固定費用")
-                    & (df["備註"] == expense_note.strip())
-                ).any()
-            )
-        allow_fixed_dup = True
-        if fixed_dup:
-            st.warning(f"⚠️ {expense_date.strftime('%Y-%m')} 已經記錄過【{expense_note.strip()}】了。")
-            allow_fixed_dup = st.checkbox("我確定要再扣一次", key=f"allow_fix_dup_{ver}")
-
-        if st.button("📤 一鍵扣款固定支出"):
-            if not allow_fixed_dup:
-                st.sidebar.warning("本月已有相同項目，請先勾選「我確定要再扣一次」。")
-            else:
-                try:
-                    worksheet.append_row(
-                        [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
-                        value_input_option="RAW",
-                    )
-                    clear_data_cache()
-                    flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
-                except Exception as e:
-                    st.sidebar.error(f"支出記錄失敗: {e}")
-
-        # 本月固定支出全部入帳（自動略過本月已記過的項目）
-        if fixed_templates and st.button("📦 本月固定支出全部入帳"):
-            ym = expense_date.strftime("%Y-%m")
-            done = set()
-            if not df.empty:
-                done = set(df.loc[(df["年月"] == ym) & (df["分類"] == "每月固定費用"), "備註"])
-            new_rows = [
-                [str(expense_date), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], name]
-                for name, t in fixed_templates.items()
-                if name not in done and t["amount"] > 0
-            ]
-            if not new_rows:
-                st.sidebar.info("本月固定支出都已經記錄過了。")
-            else:
-                try:
-                    worksheet.append_rows(new_rows, value_input_option="RAW")
-                    clear_data_cache()
-                    flash_and_rerun(f"已入帳 {len(new_rows)} 筆固定支出！")
-                except Exception as e:
-                    st.sidebar.error(f"批次入帳失敗: {e}")
-
-        st.divider()
-        with st.expander("⚙️ 線上修改或新增固定支出清單"):
-            st.caption("「扣款日」填每月幾號（1–31，可留空）；設定後，到期未記錄的項目會在上方提示並可一鍵補登。")
-            if settings_ws:
-                df_settings = pd.DataFrame(settings_rows, columns=SETTINGS_HEADER)
-                edited_settings = st.data_editor(
-                    df_settings,
-                    num_rows="dynamic",
-                    key=f"settings_editor_{ver}",
-                    column_config={"扣款日": st.column_config.TextColumn("扣款日", help="每月幾號（1–31），可留空")},
-                    **STRETCH,
-                )
-                if st.button("💾 儲存範本修改"):
-                    try:
-                        clean_df = edited_settings.fillna("").astype(str)
-                        clean_df = clean_df[clean_df["項目名稱"].str.strip() != ""]
-                        new_data = [SETTINGS_HEADER] + clean_df.values.tolist()
-                        old_len = len(settings_rows) + 1
-                        # 先寫入新內容，再清掉多出來的舊列（避免先 clear 後寫入失敗而全部遺失）
-                        settings_ws.update(range_name="A1", values=new_data)
-                        if old_len > len(new_data):
-                            settings_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
-                        fetch_settings_rows.clear()
-                        bump_editor()
-                        flash_and_rerun("固定支出範本已成功更新！")
-                    except Exception as e:
-                        st.sidebar.error(f"儲存失敗: {e}")
-
-    with tab_budget:
-        st.caption("設定每月支出上限。「總預算」是整個月的上限，也可以替個別分類另外設定。")
-        if budget_ws:
-            df_budget = pd.DataFrame(budget_rows, columns=BUDGET_HEADER)
-            df_budget["每月上限"] = pd.to_numeric(
-                df_budget["每月上限"].astype(str).str.replace(",", "", regex=False), errors="coerce"
-            )
-            edited_budget = st.data_editor(
-                df_budget,
-                num_rows="dynamic",
-                hide_index=True,
-                key=f"budget_editor_{ver}",
-                column_config={
-                    "分類": st.column_config.SelectboxColumn(
-                        "分類", options=[TOTAL_KEY] + EXPENSE_CATS, required=True
-                    ),
-                    "每月上限": st.column_config.NumberColumn("每月上限", min_value=0, step=500, format="%d"),
-                },
-                **STRETCH,
-            )
-            if st.button("💾 儲存預算"):
-                try:
-                    clean_b = edited_budget.dropna(subset=["分類", "每月上限"])
-                    clean_b = clean_b[clean_b["分類"].astype(str).str.strip() != ""]
-                    clean_b = clean_b.drop_duplicates(subset="分類", keep="last")
-                    new_data = [BUDGET_HEADER] + [
-                        [str(a).strip(), to_number(b)] for a, b in clean_b.itertuples(index=False)
-                    ]
-                    old_len = len(budget_ws.get_all_values())
-                    budget_ws.update(range_name="A1", values=new_data)
-                    if old_len > len(new_data):
-                        budget_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
-                    fetch_budget_rows.clear()
-                    bump_editor()
-                    flash_and_rerun("預算已儲存！")
-                except Exception as e:
-                    st.sidebar.error(f"預算儲存失敗: {e}")
-
-        if config_ws:
-            st.divider()
-            goal_val = st.number_input(
-                "💎 儲蓄目標金額（0 = 不使用）",
-                value=int(cfg_num(CFG_GOAL, 0)), min_value=0, step=10000, key=f"goal_{ver}",
-            )
-            if st.button("💾 儲存儲蓄目標"):
-                try:
-                    save_config(CFG_GOAL, goal_val)
-                    bump_editor()
-                    flash_and_rerun("儲蓄目標已儲存！")
-                except Exception as e:
-                    st.sidebar.error(f"儲存失敗: {e}")
-
     # ---------- 月份篩選（含上月／下月按鈕） ----------
     current_month_str = TODAY.strftime("%Y-%m")
-    if not df.empty:
-        db_months = [m for m in df["年月"].dropna().unique().tolist() if re.fullmatch(r"\d{4}-\d{2}", str(m))]
-    else:
-        db_months = []
+    db_months = [m for m in df["年月"].dropna().unique().tolist() if re.fullmatch(r"\d{4}-\d{2}", str(m))]
     all_months = sorted(set(db_months + [current_month_str]), reverse=True)  # 新到舊
 
     if st.session_state.get("month_sel") not in all_months:
@@ -902,14 +652,11 @@ if sh and worksheet:
     nav3.button("下月 ▶", on_click=shift_month, args=(1,), **STRETCH)
     selected_month = st.session_state.month_sel
 
-    if not df.empty:
-        df_selected = (
-            df[df["年月"] == selected_month]
-            .sort_values(["日期_std", "_row"], ascending=False)  # 預設新到舊
-            .reset_index(drop=True)
-        )
-    else:
-        df_selected = pd.DataFrame(columns=DF_COLS)
+    df_selected = (
+        df[df["年月"] == selected_month]
+        .sort_values(["日期_std", "_row"], ascending=False)  # 預設新到舊
+        .reset_index(drop=True)
+    )
 
     # ---------- 本月統計（含與上月比較） ----------
     total_income, total_expense = sums(df_selected)
@@ -935,19 +682,240 @@ if sh and worksheet:
         st.caption(f"💹 本月儲蓄率：{net_balance / total_income:.0%}（結餘 ÷ 收入）")
 
     render_budget_banner(df_selected, total_expense, budgets, selected_month)
+    n_pend = len(pending_fixed(df, fixed_templates, TODAY))
+    if n_pend:
+        st.info(f"📌 有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「➕ 新增與設定」→「🏠固定」補登。")
 
     st.divider()
 
     view_mode = st.radio(
         "選擇檢視模式：",
-        ["📋 記帳明細列表", "📊 圖表與固定費用", "🎯 預算追蹤", "📅 月曆模式", "📈 比較與年度"],
+        ["➕ 新增與設定", "📋 記帳明細列表", "📊 圖表與固定費用", "🎯 預算追蹤", "📅 月曆模式", "📈 比較與年度"],
         horizontal=True,
         label_visibility="collapsed",
     )
     st.divider()
 
+    # ---------- 新增與設定（原側邊欄內容） ----------
+    if view_mode == "➕ 新增與設定":
+        tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["一般", "💰薪資", "🏠固定", "🎯預算"])
+
+        with tab_general:
+            tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
+            category = st.selectbox("分類", EXPENSE_CATS if tx_type == "支出" else INCOME_CATS)
+            amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
+            pay_method = st.selectbox("付款方式", PAY_OPTIONS)
+            tx_date = st.date_input("日期", value=TODAY)
+            note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
+
+            if st.button("送出一般記帳"):
+                if amount is not None and amount > 0:
+                    try:
+                        worksheet.append_row(
+                            [str(tx_date), tx_type, category, amount, pay_method, note],
+                            value_input_option="RAW",
+                        )
+                        clear_data_cache()
+                        flash_and_rerun("一般記帳新增成功！")
+                    except Exception as e:
+                        st.error(f"寫入失敗: {e}")
+                else:
+                    st.warning("請輸入有效的金額！")
+
+        with tab_salary:
+            default_salary = st.number_input(
+                "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
+            )
+            if config_ws and st.button("💾 記住為預設月薪"):
+                try:
+                    save_config(CFG_SALARY, default_salary)
+                    bump_editor()
+                    flash_and_rerun("已更新預設月薪！")
+                except Exception as e:
+                    st.error(f"儲存失敗: {e}")
+            salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
+
+            # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
+            salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
+            allow_salary_dup = True
+            if salary_dup:
+                st.warning(f"⚠️ {salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
+                allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
+
+            if st.button("📥 一鍵入帳本月薪資"):
+                if not allow_salary_dup:
+                    st.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
+                else:
+                    try:
+                        worksheet.append_row(
+                            [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
+                            value_input_option="RAW",
+                        )
+                        clear_data_cache()
+                        flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
+                    except Exception as e:
+                        st.error(f"薪資入帳失敗: {e}")
+
+        with tab_fixed:
+            # 到期未記錄的固定支出（需先在下方清單設定「扣款日」）
+            pend = pending_fixed(df, fixed_templates, TODAY)
+            if pend:
+                lines = "\n".join(
+                    f"- {n}　${t['amount']:,.0f}（{d.strftime('%m/%d')}）" for n, t, d in pend
+                )
+                st.info("📌 本月已到期、尚未記錄的固定支出：\n" + lines)
+                if st.button(f"⚡ 一鍵補登 {len(pend)} 筆"):
+                    try:
+                        worksheet.append_rows(
+                            [
+                                [str(d), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], n]
+                                for n, t, d in pend
+                            ],
+                            value_input_option="RAW",
+                        )
+                        clear_data_cache()
+                        flash_and_rerun(f"已補登 {len(pend)} 筆固定支出！")
+                    except Exception as e:
+                        st.error(f"補登失敗: {e}")
+                st.divider()
+
+            if fixed_templates:
+                selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
+                default_val = fixed_templates[selected_template]
+            else:
+                selected_template = "無範本"
+                default_val = {"amount": 0, "pay": "現金"}
+
+            expense_note = st.text_input("支出項目名稱", value=selected_template)
+            default_expense = st.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
+            default_pay_idx = PAY_OPTIONS.index(default_val["pay"]) if default_val["pay"] in PAY_OPTIONS else 0
+            expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
+            expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
+
+            # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
+            fixed_dup = already_recorded(df, expense_date.strftime("%Y-%m"), "每月固定費用", expense_note)
+            allow_fixed_dup = True
+            if fixed_dup:
+                st.warning(f"⚠️ {expense_date.strftime('%Y-%m')} 已經記錄過【{expense_note.strip()}】了。")
+                allow_fixed_dup = st.checkbox("我確定要再扣一次", key=f"allow_fix_dup_{ver}")
+
+            if st.button("📤 一鍵扣款固定支出"):
+                if not allow_fixed_dup:
+                    st.warning("本月已有相同項目，請先勾選「我確定要再扣一次」。")
+                else:
+                    try:
+                        worksheet.append_row(
+                            [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
+                            value_input_option="RAW",
+                        )
+                        clear_data_cache()
+                        flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
+                    except Exception as e:
+                        st.error(f"支出記錄失敗: {e}")
+
+            # 本月固定支出全部入帳（自動略過本月已記過的項目）
+            if fixed_templates and st.button("📦 本月固定支出全部入帳"):
+                ym = expense_date.strftime("%Y-%m")
+                done = set()
+                if not df.empty:
+                    done = set(df.loc[(df["年月"] == ym) & (df["分類"] == "每月固定費用"), "備註"])
+                new_rows = [
+                    [str(expense_date), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], name]
+                    for name, t in fixed_templates.items()
+                    if name not in done and t["amount"] > 0
+                ]
+                if not new_rows:
+                    st.info("本月固定支出都已經記錄過了。")
+                else:
+                    try:
+                        worksheet.append_rows(new_rows, value_input_option="RAW")
+                        clear_data_cache()
+                        flash_and_rerun(f"已入帳 {len(new_rows)} 筆固定支出！")
+                    except Exception as e:
+                        st.error(f"批次入帳失敗: {e}")
+
+            st.divider()
+            with st.expander("⚙️ 線上修改或新增固定支出清單"):
+                st.caption("「扣款日」填每月幾號（1–31，可留空）；設定後，到期未記錄的項目會在上方提示並可一鍵補登。")
+                if settings_ws:
+                    df_settings = pd.DataFrame(settings_rows, columns=SETTINGS_HEADER)
+                    edited_settings = st.data_editor(
+                        df_settings,
+                        num_rows="dynamic",
+                        key=f"settings_editor_{ver}",
+                        column_config={"扣款日": st.column_config.TextColumn("扣款日", help="每月幾號（1–31），可留空")},
+                        **STRETCH,
+                    )
+                    if st.button("💾 儲存範本修改"):
+                        try:
+                            clean_df = edited_settings.fillna("").astype(str)
+                            clean_df = clean_df[clean_df["項目名稱"].str.strip() != ""]
+                            new_data = [SETTINGS_HEADER] + clean_df.values.tolist()
+                            old_len = len(settings_ws.get_all_values())
+                            # 先寫入新內容，再清掉多出來的舊列（避免先 clear 後寫入失敗而全部遺失）
+                            settings_ws.update(range_name="A1", values=new_data)
+                            if old_len > len(new_data):
+                                settings_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
+                            fetch_rows.clear()
+                            bump_editor()
+                            flash_and_rerun("固定支出範本已成功更新！")
+                        except Exception as e:
+                            st.error(f"儲存失敗: {e}")
+
+        with tab_budget:
+            st.caption("設定每月支出上限。「總預算」是整個月的上限，也可以替個別分類另外設定。")
+            if budget_ws:
+                df_budget = pd.DataFrame(budget_rows, columns=BUDGET_HEADER)
+                df_budget["每月上限"] = pd.to_numeric(
+                    df_budget["每月上限"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+                )
+                edited_budget = st.data_editor(
+                    df_budget,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    key=f"budget_editor_{ver}",
+                    column_config={
+                        "分類": st.column_config.SelectboxColumn(
+                            "分類", options=[TOTAL_KEY] + EXPENSE_CATS, required=True
+                        ),
+                        "每月上限": st.column_config.NumberColumn("每月上限", min_value=0, step=500, format="%d"),
+                    },
+                    **STRETCH,
+                )
+                if st.button("💾 儲存預算"):
+                    try:
+                        clean_b = edited_budget.dropna(subset=["分類", "每月上限"])
+                        clean_b = clean_b[clean_b["分類"].astype(str).str.strip() != ""]
+                        clean_b = clean_b.drop_duplicates(subset="分類", keep="last")
+                        new_data = [BUDGET_HEADER] + [
+                            [str(a).strip(), to_number(b)] for a, b in clean_b.itertuples(index=False)
+                        ]
+                        old_len = len(budget_ws.get_all_values())
+                        budget_ws.update(range_name="A1", values=new_data)
+                        if old_len > len(new_data):
+                            budget_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
+                        fetch_rows.clear()
+                        bump_editor()
+                        flash_and_rerun("預算已儲存！")
+                    except Exception as e:
+                        st.error(f"預算儲存失敗: {e}")
+
+            if config_ws:
+                st.divider()
+                goal_val = st.number_input(
+                    "💎 儲蓄目標金額（0 = 不使用）",
+                    value=int(cfg_num(CFG_GOAL, 0)), min_value=0, step=10000, key=f"goal_{ver}",
+                )
+                if st.button("💾 儲存儲蓄目標"):
+                    try:
+                        save_config(CFG_GOAL, goal_val)
+                        bump_editor()
+                        flash_and_rerun("儲蓄目標已儲存！")
+                    except Exception as e:
+                        st.error(f"儲存失敗: {e}")
+
     # ---------- 模式 1：明細列表 ----------
-    if view_mode == "📋 記帳明細列表":
+    elif view_mode == "📋 記帳明細列表":
         st.subheader(f"📋 {selected_month} 記帳明細列表")
         if not df_selected.empty:
             st.download_button(
