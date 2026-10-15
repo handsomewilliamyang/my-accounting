@@ -3,7 +3,7 @@ import html
 import re
 import time
 import calendar as py_calendar
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import gspread
 import pandas as pd
@@ -40,7 +40,7 @@ PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
 EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出"]
 INCOME_CATS = ["薪資", "其他收入"]
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
-SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式"]
+SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式", "扣款日"]
 BUDGET_HEADER = ["分類", "每月上限"]
 TRASH_HEADER = FIELDS + ["刪除時間"]
 TRASH_COLS = ["_row"] + TRASH_HEADER
@@ -198,6 +198,11 @@ def prev_month_str(ym):
     return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
 
 
+def md_escape(s):
+    # 跳脫備註等使用者輸入的文字，避免被當成 Markdown 語法（含 $ 公式）
+    return re.sub(r"([\\`*_{}\[\]()#+\-!|~$<>])", r"\\\1", str(s))
+
+
 def sums(d):
     """回傳 (總收入, 總支出)；空表也安全"""
     return (
@@ -235,10 +240,10 @@ def get_settings_worksheet(_sh):
     try:
         return _sh.worksheet("固定支出設定")
     except gspread.WorksheetNotFound:
-        new_ws = _sh.add_worksheet(title="固定支出設定", rows=100, cols=3)
+        new_ws = _sh.add_worksheet(title="固定支出設定", rows=100, cols=4)
         new_ws.append_row(SETTINGS_HEADER)
-        new_ws.append_row(["孝親費", "5000", "現金"])
-        new_ws.append_row(["電信費", "599", "信用卡"])
+        new_ws.append_row(["孝親費", "5000", "現金", "5"])
+        new_ws.append_row(["電信費", "599", "信用卡", "10"])
         return new_ws
 
 
@@ -255,7 +260,16 @@ def fetch_settings_rows(_settings_ws):
     if not _settings_ws:
         return []
     data = _settings_ws.get_all_values()
-    return [pad_row(r, 3) for r in data[1:] if any(str(c).strip() for c in r)]
+    return [pad_row(r, 4) for r in data[1:] if any(str(c).strip() for c in r)]
+
+
+def parse_day(v):
+    # 扣款日：1–31 的整數，其他（含空白）一律視為「未設定」
+    try:
+        d = int(float(str(v).strip()))
+        return d if 1 <= d <= 31 else None
+    except ValueError:
+        return None
 
 
 def build_templates(rows):
@@ -269,7 +283,7 @@ def build_templates(rows):
         except ValueError:
             amt = 0
         pay = r[2].strip() if r[2].strip() else "現金"
-        templates[name] = {"amount": amt, "pay": pay}
+        templates[name] = {"amount": amt, "pay": pay, "day": parse_day(r[3])}
     return templates
 
 
@@ -566,6 +580,23 @@ def delete_rows(ws, row_nos):
     return len(nos)
 
 
+def pending_fixed(df_all, templates, ref_date):
+    # 本月已到扣款日、但還沒記錄的固定支出（以「備註 = 項目名稱」判斷是否已記錄）
+    ym = ref_date.strftime("%Y-%m")
+    last = py_calendar.monthrange(ref_date.year, ref_date.month)[1]
+    sub = df_all[(df_all["年月"] == ym) & (df_all["分類"] == "每月固定費用")]
+    done = set(sub["備註"].str.strip()) if not sub.empty else set()
+    out = []
+    for name, t in templates.items():
+        d = t.get("day")
+        if not d or t["amount"] <= 0:
+            continue
+        due = min(d, last)  # 例如設 31 號，2 月就算 28/29 號
+        if due <= ref_date.day and name not in done:
+            out.append((name, t, date(ref_date.year, ref_date.month, due)))
+    return out
+
+
 def validate_row(r):
     """檢查單列資料。回傳 (錯誤清單, 整理後可寫入的一列資料)"""
     errs = []
@@ -692,6 +723,28 @@ if sh and worksheet:
                     st.sidebar.error(f"薪資入帳失敗: {e}")
 
     with tab_fixed:
+        # 到期未記錄的固定支出（需先在下方清單設定「扣款日」）
+        pend = pending_fixed(df, fixed_templates, TODAY)
+        if pend:
+            lines = "\n".join(
+                f"- {n}　${t['amount']:,.0f}（{d.strftime('%m/%d')}）" for n, t, d in pend
+            )
+            st.info("📌 本月已到期、尚未記錄的固定支出：\n" + lines)
+            if st.button(f"⚡ 一鍵補登 {len(pend)} 筆"):
+                try:
+                    worksheet.append_rows(
+                        [
+                            [str(d), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], n]
+                            for n, t, d in pend
+                        ],
+                        value_input_option="RAW",
+                    )
+                    clear_data_cache()
+                    flash_and_rerun(f"已補登 {len(pend)} 筆固定支出！")
+                except Exception as e:
+                    st.sidebar.error(f"補登失敗: {e}")
+            st.divider()
+
         if fixed_templates:
             selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
             default_val = fixed_templates[selected_template]
@@ -757,12 +810,14 @@ if sh and worksheet:
 
         st.divider()
         with st.expander("⚙️ 線上修改或新增固定支出清單"):
+            st.caption("「扣款日」填每月幾號（1–31，可留空）；設定後，到期未記錄的項目會在上方提示並可一鍵補登。")
             if settings_ws:
                 df_settings = pd.DataFrame(settings_rows, columns=SETTINGS_HEADER)
                 edited_settings = st.data_editor(
                     df_settings,
                     num_rows="dynamic",
                     key=f"settings_editor_{ver}",
+                    column_config={"扣款日": st.column_config.TextColumn("扣款日", help="每月幾號（1–31），可留空")},
                     **STRETCH,
                 )
                 if st.button("💾 儲存範本修改"):
@@ -774,7 +829,7 @@ if sh and worksheet:
                         # 先寫入新內容，再清掉多出來的舊列（避免先 clear 後寫入失敗而全部遺失）
                         settings_ws.update(range_name="A1", values=new_data)
                         if old_len > len(new_data):
-                            settings_ws.batch_clear([f"A{len(new_data) + 1}:C{old_len}"])
+                            settings_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
                         fetch_settings_rows.clear()
                         bump_editor()
                         flash_and_rerun("固定支出範本已成功更新！")
@@ -1263,53 +1318,74 @@ if sh and worksheet:
         except ValueError:
             year, month = TODAY.year, TODAY.month
 
-        # firstweekday=6 → 週日為每週第一天，與標題列一致
-        cal_matrix = py_calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
+        cal_style = st.radio("顯示方式", ["格狀月曆", "清單（手機建議）"], horizontal=True)
 
-        weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
-        cols = st.columns(7)
-        for i, day_name in enumerate(weekdays):
-            cols[i].markdown(f"<h4 style='text-align: center;'>{day_name}</h4>", unsafe_allow_html=True)
-
-        st.divider()
-
-        for week in cal_matrix:
-            cols = st.columns(7)
-            for i, day in enumerate(week):
-                with cols[i]:
-                    if day == 0:
+        if cal_style == "清單（手機建議）":
+            if df_selected.empty:
+                st.info("此月份尚無資料。")
+            else:
+                for d_str, g in df_selected.sort_values(["日期_std", "_row"]).groupby("日期_std"):
+                    g_inc, g_exp = sums(g)
+                    net_txt = md_escape(f"{g_inc - g_exp:+,.0f}")
+                    ts = pd.to_datetime(d_str, errors="coerce")
+                    wd = WEEKDAY_NAMES[int(ts.dayofweek)] if not pd.isna(ts) else ""
+                    st.markdown(md_escape(f"{d_str}（{wd}）") + f"　**淨 {net_txt}**")
+                    for _, row in g.iterrows():
+                        is_exp = row["類型"] == "支出"
+                        dot = "🔴" if is_exp else "🟢"
+                        sign = "-" if is_exp else "+"
+                        amt_txt = md_escape(f"{sign}${row['金額_num']:,.0f}")
                         st.markdown(
-                            "<div class='cal-card' style='opacity: 0.2;'><div class='cal-day-header'>-</div></div>",
+                            f"- {dot} {amt_txt}　{md_escape(row['分類'])}　{md_escape(row['備註'])}"
+                        )
+        else:
+            # firstweekday=6 → 週日為每週第一天，與標題列一致
+            cal_matrix = py_calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
+
+            weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
+            cols = st.columns(7)
+            for i, day_name in enumerate(weekdays):
+                cols[i].markdown(f"<h4 style='text-align: center;'>{day_name}</h4>", unsafe_allow_html=True)
+
+            st.divider()
+
+            for week in cal_matrix:
+                cols = st.columns(7)
+                for i, day in enumerate(week):
+                    with cols[i]:
+                        if day == 0:
+                            st.markdown(
+                                "<div class='cal-card' style='opacity: 0.2;'><div class='cal-day-header'>-</div></div>",
+                                unsafe_allow_html=True,
+                            )
+                            continue
+
+                        date_str = f"{year}-{month:02d}-{day:02d}"
+                        body = ""
+                        day_net = 0
+                        if not df_selected.empty:
+                            day_records = df_selected[df_selected["日期_std"] == date_str]
+                            for _, row in day_records.iterrows():
+                                is_exp = row["類型"] == "支出"
+                                color = "#ff6b6b" if is_exp else "#51cf66"
+                                sign = "-" if is_exp else "+"
+                                amt = row["金額_num"]
+                                day_net += -amt if is_exp else amt
+                                body += (
+                                    f"<div style='margin-bottom: 6px;'>"
+                                    f"<span style='color:{color}; font-size:14px; font-weight:bold;'>"
+                                    f"{sign}${amt:,.0f} ({html.escape(str(row['分類']))})</span><br>"
+                                    f"<span class='cal-note'>{html.escape(str(row['備註']))}</span>"
+                                    f"</div>"
+                                )
+                        total_html = ""
+                        if body:
+                            total_html = f"<span class='cal-day-total'>淨 {day_net:+,.0f}</span>"
+                        st.markdown(
+                            f"<div class='cal-card'><div class='cal-day-header'>"
+                            f"<span>{day} 日</span>{total_html}</div>{body}</div>",
                             unsafe_allow_html=True,
                         )
-                        continue
-
-                    date_str = f"{year}-{month:02d}-{day:02d}"
-                    body = ""
-                    day_net = 0
-                    if not df_selected.empty:
-                        day_records = df_selected[df_selected["日期_std"] == date_str]
-                        for _, row in day_records.iterrows():
-                            is_exp = row["類型"] == "支出"
-                            color = "#ff6b6b" if is_exp else "#51cf66"
-                            sign = "-" if is_exp else "+"
-                            amt = row["金額_num"]
-                            day_net += -amt if is_exp else amt
-                            body += (
-                                f"<div style='margin-bottom: 6px;'>"
-                                f"<span style='color:{color}; font-size:14px; font-weight:bold;'>"
-                                f"{sign}${amt:,.0f} ({html.escape(str(row['分類']))})</span><br>"
-                                f"<span class='cal-note'>{html.escape(str(row['備註']))}</span>"
-                                f"</div>"
-                            )
-                    total_html = ""
-                    if body:
-                        total_html = f"<span class='cal-day-total'>淨 {day_net:+,.0f}</span>"
-                    st.markdown(
-                        f"<div class='cal-card'><div class='cal-day-header'>"
-                        f"<span>{day} 日</span>{total_html}</div>{body}</div>",
-                        unsafe_allow_html=True,
-                    )
 
     # ---------- 模式 5：比較與年度 ----------
     elif view_mode == "📈 比較與年度":
