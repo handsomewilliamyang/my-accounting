@@ -853,38 +853,39 @@ if sh and worksheet:
                     st.warning("請輸入有效的金額！")
 
         with tab_salary:
-            default_salary = st.number_input(
-                "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
-            )
-            if config_ws and st.button("記住為預設月薪"):
-                try:
-                    save_config(CFG_SALARY, default_salary)
-                    bump_editor()
-                    flash_and_rerun("已更新預設月薪！")
-                except Exception as e:
-                    st.error(f"儲存失敗: {e}")
-            salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
-
-            # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
-            salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
-            allow_salary_dup = True
-            if salary_dup:
-                st.warning(f"{salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
-                allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
-
-            if st.button("入帳本月薪資", type="primary"):
-                if not allow_salary_dup:
-                    st.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
-                else:
+            with st.container(border=True):
+                default_salary = st.number_input(
+                    "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
+                )
+                if config_ws and st.button("記住為預設月薪"):
                     try:
-                        worksheet.append_row(
-                            [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
-                            value_input_option="RAW",
-                        )
-                        clear_data_cache()
-                        flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
+                        save_config(CFG_SALARY, default_salary)
+                        bump_editor()
+                        flash_and_rerun("已更新預設月薪！")
                     except Exception as e:
-                        st.error(f"薪資入帳失敗: {e}")
+                        st.error(f"儲存失敗: {e}")
+                salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
+
+                # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
+                salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
+                allow_salary_dup = True
+                if salary_dup:
+                    st.warning(f"{salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
+                    allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
+
+                if st.button("入帳本月薪資", type="primary"):
+                    if not allow_salary_dup:
+                        st.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
+                    else:
+                        try:
+                            worksheet.append_row(
+                                [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
+                                value_input_option="RAW",
+                            )
+                            clear_data_cache()
+                            flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
+                        except Exception as e:
+                            st.error(f"薪資入帳失敗: {e}")
 
         with tab_fixed:
             # 到期未記錄的固定支出（需先在下方清單設定「扣款日」）
@@ -1451,14 +1452,18 @@ if sh and worksheet:
                         date_str = f"{year}-{month:02d}-{day:02d}"
                         body = ""
                         day_net = 0
+                        n_extra = 0
                         if not df_selected.empty:
                             day_records = df_selected[df_selected["日期_std"] == date_str]
-                            for _, row in day_records.iterrows():
+                            for k, (_, row) in enumerate(day_records.iterrows()):
                                 is_exp = row["類型"] == "支出"
                                 color = EXPENSE_COLOR if is_exp else INCOME_COLOR
                                 sign = "-" if is_exp else "+"
                                 amt = row["金額_num"]
                                 day_net += -amt if is_exp else amt
+                                if k >= 3:
+                                    n_extra += 1
+                                    continue
                                 body += (
                                     f"<div style='margin-bottom: 6px;'>"
                                     f"<span style='color:{color}; font-size:14px; font-weight:600;'>"
@@ -1466,9 +1471,15 @@ if sh and worksheet:
                                     f"<span class='cal-note'>{html.escape(str(row['備註']))}</span>"
                                     f"</div>"
                                 )
+                        if n_extra:
+                            body += f"<div class='cal-note'>另 {n_extra} 筆…</div>"
                         total_html = ""
                         if body:
-                            total_html = f"<span class='cal-day-total'>淨 {day_net:+,.0f}</span>"
+                            net_color = INCOME_COLOR if day_net >= 0 else EXPENSE_COLOR
+                            total_html = (
+                                f"<span class='cal-day-total' style='color:{net_color}; opacity:1;'>"
+                                f"淨 {day_net:+,.0f}</span>"
+                            )
                         today_cls = " today" if date_str == today_str else ""
                         st.markdown(
                             f"<div class='cal-card{today_cls}'><div class='cal-day-header'>"
