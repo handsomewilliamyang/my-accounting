@@ -181,6 +181,20 @@ st.markdown("""
     }
     .cal-day-total { font-size: 12px; font-weight: 400; opacity: 0.75; }
     .cal-note { font-size: 13px; opacity: 0.7; }
+
+    /* 帶邊框的容器（預算卡片等） */
+    div[data-testid="stVerticalBlockBorderWrapper"] { border-radius: 12px; }
+
+    /* 手機版：縮小邊距、標題與導覽按鈕 */
+    @media (max-width: 640px) {
+        div.block-container, div[data-testid="stMainBlockContainer"] {
+            padding-left: 1rem; padding-right: 1rem; padding-top: 1.2rem;
+        }
+        .app-header h1 { font-size: 1.5rem; }
+        .st-key-view_mode label { padding: 5px 12px; font-size: .9rem; }
+        div[data-testid="stMetric"] { padding: 10px 14px; }
+        .cal-card { min-height: 90px; padding: 6px; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1329,8 +1343,9 @@ if sh and worksheet:
                 left = limit - spent
                 left_txt = f"剩餘 ${left:,.0f}" if left >= 0 else f"超支 ${-left:,.0f}"
                 icon = "🔴" if ratio >= 1 else ("🟠" if ratio >= 0.8 else "🟢")
-                st.markdown(f"{icon} **{name}**　${spent:,.0f} / ${limit:,.0f}　（{left_txt}）")
-                st.progress(float(min(ratio, 1.0)), text=f"{ratio:.0%}")
+                with st.container(border=True):
+                    st.markdown(f"{icon} **{name}**　${spent:,.0f} / ${limit:,.0f}　（{left_txt}）")
+                    st.progress(float(min(ratio, 1.0)), text=f"{ratio:.0%}")
 
             if selected_month == current_month_str and TOTAL_KEY in budgets:
                 y, m = map(int, selected_month.split("-"))
