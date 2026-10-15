@@ -909,63 +909,65 @@ if sh and worksheet:
                         st.error(f"補登失敗: {e}")
                 st.divider()
 
-            if fixed_templates:
-                selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
-                default_val = fixed_templates[selected_template]
-            else:
-                selected_template = "無範本"
-                default_val = {"amount": 0, "pay": "現金"}
+            with st.container(border=True):
+                st.markdown("**手動扣款**")
+                if fixed_templates:
+                    selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
+                    default_val = fixed_templates[selected_template]
+                else:
+                    selected_template = "無範本"
+                    default_val = {"amount": 0, "pay": "現金"}
 
-            expense_note = st.text_input("支出項目名稱", value=selected_template)
-            default_expense = st.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
-            default_pay_idx = PAY_OPTIONS.index(default_val["pay"]) if default_val["pay"] in PAY_OPTIONS else 0
-            expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
-            expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
+                expense_note = st.text_input("支出項目名稱", value=selected_template)
+                default_expense = st.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
+                default_pay_idx = PAY_OPTIONS.index(default_val["pay"]) if default_val["pay"] in PAY_OPTIONS else 0
+                expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
+                expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
 
-            # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
-            fixed_dup = already_recorded(df, expense_date.strftime("%Y-%m"), "每月固定費用", expense_note)
-            allow_fixed_dup = True
-            if fixed_dup:
-                st.warning(f"{expense_date.strftime('%Y-%m')} 已經記錄過【{expense_note.strip()}】了。")
-                allow_fixed_dup = st.checkbox("我確定要再扣一次", key=f"allow_fix_dup_{ver}")
+                # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
+                fixed_dup = already_recorded(df, expense_date.strftime("%Y-%m"), "每月固定費用", expense_note)
+                allow_fixed_dup = True
+                if fixed_dup:
+                    st.warning(f"{expense_date.strftime('%Y-%m')} 已經記錄過【{expense_note.strip()}】了。")
+                    allow_fixed_dup = st.checkbox("我確定要再扣一次", key=f"allow_fix_dup_{ver}")
 
-            fx1, fx2 = st.columns(2)
-            with fx1:
-                if st.button("扣款這筆固定支出", type="primary", **STRETCH):
-                    if not allow_fixed_dup:
-                        st.warning("本月已有相同項目，請先勾選「我確定要再扣一次」。")
-                    else:
-                        try:
-                            worksheet.append_row(
-                                [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
-                                value_input_option="RAW",
-                            )
-                            clear_data_cache()
-                            flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
-                        except Exception as e:
-                            st.error(f"支出記錄失敗: {e}")
+                fx1, fx2 = st.columns(2)
+                with fx1:
+                    if st.button("扣款這筆固定支出", type="primary", **STRETCH):
+                        if not allow_fixed_dup:
+                            st.warning("本月已有相同項目，請先勾選「我確定要再扣一次」。")
+                        else:
+                            try:
+                                worksheet.append_row(
+                                    [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
+                                    value_input_option="RAW",
+                                )
+                                clear_data_cache()
+                                flash_and_rerun(f"成功記錄固定支出【{expense_note}】${default_expense:,}！")
+                            except Exception as e:
+                                st.error(f"支出記錄失敗: {e}")
 
-            # 本月固定支出全部入帳（自動略過本月已記過的項目）
-            with fx2:
-                if fixed_templates and st.button("本月全部入帳", **STRETCH):
-                    ym = expense_date.strftime("%Y-%m")
-                    done = set()
-                    if not df.empty:
-                        done = set(df.loc[(df["年月"] == ym) & (df["分類"] == "每月固定費用"), "備註"])
-                    new_rows = [
-                        [str(expense_date), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], name]
-                        for name, t in fixed_templates.items()
-                        if name not in done and t["amount"] > 0
-                    ]
-                    if not new_rows:
-                        st.info("本月固定支出都已經記錄過了。")
-                    else:
-                        try:
-                            worksheet.append_rows(new_rows, value_input_option="RAW")
-                            clear_data_cache()
-                            flash_and_rerun(f"已入帳 {len(new_rows)} 筆固定支出！")
-                        except Exception as e:
-                            st.error(f"批次入帳失敗: {e}")
+                # 本月固定支出全部入帳（自動略過本月已記過的項目）
+                with fx2:
+                    if fixed_templates and st.button("本月全部入帳", **STRETCH):
+                        ym = expense_date.strftime("%Y-%m")
+                        done = set()
+                        if not df.empty:
+                            done = set(df.loc[(df["年月"] == ym) & (df["分類"] == "每月固定費用"), "備註"])
+                        new_rows = [
+                            [str(expense_date), "支出", "每月固定費用", to_number(t["amount"]), t["pay"], name]
+                            for name, t in fixed_templates.items()
+                            if name not in done and t["amount"] > 0
+                        ]
+                        if not new_rows:
+                            st.info("本月固定支出都已經記錄過了。")
+                        else:
+                            try:
+                                worksheet.append_rows(new_rows, value_input_option="RAW")
+                                clear_data_cache()
+                                flash_and_rerun(f"已入帳 {len(new_rows)} 筆固定支出！")
+                            except Exception as e:
+                                st.error(f"批次入帳失敗: {e}")
 
             st.divider()
             with st.expander("線上修改或新增固定支出清單"):
@@ -1496,7 +1498,9 @@ if sh and worksheet:
             top = cmp_df.iloc[0]
             if top["差額"] > 0:
                 st.info(f"「{top['分類']}」比上月多花 ${top['差額']:,.0f}，是增加最多的分類。")
-            st.dataframe(cmp_df, hide_index=True, **STRETCH)
+            cmp_cfg = {c: st.column_config.NumberColumn(c, format="%d") for c in [selected_month, prev_month, "差額"]}
+            cmp_cfg["變化%"] = st.column_config.NumberColumn("變化%", format="%.1f")
+            st.dataframe(cmp_df, hide_index=True, column_config=cmp_cfg, **STRETCH)
             melted = cmp_df.melt(
                 id_vars="分類", value_vars=[selected_month, prev_month], var_name="月份", value_name="金額"
             )
@@ -1546,7 +1550,11 @@ if sh and worksheet:
                 color="分類", color_discrete_map=CAT_COLORS,
             ))
 
-        st.dataframe(yr, hide_index=True, **STRETCH)
+        st.dataframe(
+            yr, hide_index=True,
+            column_config={c: st.column_config.NumberColumn(c, format="%d") for c in ["收入", "支出", "結餘"]},
+            **STRETCH,
+        )
         st.download_button(
             "下載全部記帳資料（CSV）",
             df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
