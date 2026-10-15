@@ -50,7 +50,8 @@ CFG_SALARY = "預設月薪"
 CFG_GOAL = "儲蓄目標"
 WEEKDAY_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
 TOTAL_KEY = "總預算"
-CACHE_TTL = 60  # 快取秒數（多裝置同步更快）
+CACHE_TTL = 60  # 記帳資料的快取秒數（多裝置同步更快）
+CACHE_TTL_CFG = 600  # 設定類分頁很少改，快取久一點（儲存時會手動清除；其他裝置改的最多 10 分鐘後同步）
 
 
 def _ver_tuple():
@@ -283,7 +284,12 @@ except Exception as e:
     sh = None
     st.error(f"連線 Google 試算表失敗：{e}")
 
-worksheet = sh.get_worksheet(0) if sh else None
+@st.cache_resource
+def get_main_ws(_sh):
+    return _sh.get_worksheet(0)
+
+
+worksheet = get_main_ws(sh) if sh else None
 
 
 @st.cache_resource
@@ -307,23 +313,49 @@ def get_ws(title, rows, cols, init_rows):
         return None
 
 
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_rows(_ws, n):
-    # 讀取設定類分頁（跳過標題列與第一欄空白的列）。失敗時丟出例外，不會被快取；寫入後記得 fetch_rows.clear()
-    if not _ws:
-        return []
-    rows = [pad_row(r, n) for r in _ws.get_all_values()[1:]]
-    return [r for r in rows if str(r[0]).strip()]
-
-
-def load_rows(ws, n, label):
-    return safe_load(lambda w: fetch_rows(w, n), ws, [], label)
-
-
+# 先確保各分頁都存在（找不到會自動建立）
 settings_ws = get_ws(
     "固定支出設定", 100, 4,
     [SETTINGS_HEADER, ["孝親費", "5000", "現金", "5"], ["電信費", "599", "信用卡", "10"]],
 )
+budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
+cat_ws = get_ws(
+    "分類設定", 100, 2,
+    [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
+)
+trash_ws = get_ws("垃圾桶", 500, 7, [TRASH_HEADER])
+config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
+
+CFG_SHEETS = (("固定支出設定", 4), ("預算設定", 2), ("分類設定", 2), ("系統設定", 2))
+
+
+@st.cache_data(ttl=CACHE_TTL_CFG)
+def fetch_config_bundle(_sh):
+    # 一次 API 呼叫讀完 4 個設定分頁（原本要 4 次）。失敗時丟出例外，不會被快取；寫入後記得 fetch_config_bundle.clear()
+    ranges = [f"'{t}'!A:Z" for t, _ in CFG_SHEETS]
+    try:
+        value_ranges = [vr.get("values", []) for vr in _sh.values_batch_get(ranges).get("valueRanges", [])]
+    except AttributeError:  # 舊版 gspread 沒有這個方法時，退回逐頁讀取
+        value_ranges = [_sh.worksheet(t).get_all_values() for t, _ in CFG_SHEETS]
+    out = {}
+    for (title, n), values in zip(CFG_SHEETS, value_ranges):
+        rows = [pad_row(r, n) for r in values[1:]]
+        out[title] = [r for r in rows if str(r[0]).strip()]
+    return out
+
+
+_cfg_loaded = {}
+
+
+def load_rows(ws, label):
+    # 設定類分頁共用同一份快取資料；第一次呼叫時才實際讀取
+    if not ws:
+        return []
+    if "data" not in _cfg_loaded:
+        _cfg_loaded["data"] = safe_load(fetch_config_bundle, sh, {}, "設定分頁")
+    return _cfg_loaded["data"].get(label, [])
+
+
 
 
 def parse_day(v):
@@ -350,12 +382,11 @@ def build_templates(rows):
     return templates
 
 
-settings_rows = load_rows(settings_ws, 4, "固定支出設定")
+settings_rows = load_rows(settings_ws, "固定支出設定")
 fixed_templates = build_templates(settings_rows)
 
 
 # ======================= 預算設定 =======================
-budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
 
 
 def build_budgets(rows):
@@ -370,17 +401,13 @@ def build_budgets(rows):
     return budgets
 
 
-budget_rows = load_rows(budget_ws, 2, "預算設定")
+budget_rows = load_rows(budget_ws, "預算設定")
 budgets = build_budgets(budget_rows)
 
 
 # ======================= 分類設定（從試算表讀取） =======================
-cat_ws = get_ws(
-    "分類設定", 100, 2,
-    [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
-)
 
-_cat_rows = load_rows(cat_ws, 2, "分類設定")
+_cat_rows = load_rows(cat_ws, "分類設定")
 _exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
 _inc = [c.strip() for t, c in _cat_rows if t.strip() == "收入" and c.strip()]
 if _exp:
@@ -395,7 +422,6 @@ if "薪資" not in INCOME_CATS:
 
 
 # ======================= 垃圾桶（刪除後可還原） =======================
-trash_ws = get_ws("垃圾桶", 500, 7, [TRASH_HEADER])
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -418,10 +444,9 @@ def fetch_trash(_trash_ws):
 
 
 # ======================= 系統設定（預設月薪、儲蓄目標） =======================
-config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
 
-config_rows = load_rows(config_ws, 2, "系統設定")
+config_rows = load_rows(config_ws, "系統設定")
 config = {str(r[0]).strip(): r[1] for r in config_rows}
 
 
@@ -438,7 +463,7 @@ def save_config(key, value):
             break
     else:
         config_ws.append_row([key, value])
-    fetch_rows.clear()
+    fetch_config_bundle.clear()
 
 
 def render_budget_banner(df_month, total_spent, budgets, month_label):
@@ -475,7 +500,7 @@ def fetch_data(_sh):
     """讀取記帳主表。讀取失敗時直接丟出例外（失敗結果不會被快取）。"""
     if not _sh:
         return pd.DataFrame(columns=DF_COLS)
-    ws = _sh.get_worksheet(0)
+    ws = get_main_ws(_sh)
     raw_data = ws.get_all_values()
     if len(raw_data) < 2:
         return pd.DataFrame(columns=DF_COLS)
@@ -623,7 +648,7 @@ if sh and worksheet:
     side_c1, side_c2, _ = st.columns([1, 1, 4])
     if side_c1.button("🔄 重新整理資料"):
         fetch_data.clear()
-        fetch_rows.clear()
+        fetch_config_bundle.clear()
         fetch_trash.clear()
         bump_editor()
         st.rerun()
@@ -856,7 +881,7 @@ if sh and worksheet:
                             settings_ws.update(range_name="A1", values=new_data)
                             if old_len > len(new_data):
                                 settings_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
-                            fetch_rows.clear()
+                            fetch_config_bundle.clear()
                             bump_editor()
                             flash_and_rerun("固定支出範本已成功更新！")
                         except Exception as e:
@@ -894,7 +919,7 @@ if sh and worksheet:
                         budget_ws.update(range_name="A1", values=new_data)
                         if old_len > len(new_data):
                             budget_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
-                        fetch_rows.clear()
+                        fetch_config_bundle.clear()
                         bump_editor()
                         flash_and_rerun("預算已儲存！")
                     except Exception as e:
@@ -1043,8 +1068,9 @@ if sh and worksheet:
             st.info(f"所選月份 {selected_month} 目前還沒有任何記錄！")
 
         # ----- 垃圾桶：還原或永久刪除 -----
-        trash_df = safe_load(fetch_trash, trash_ws, pd.DataFrame(columns=TRASH_COLS), "垃圾桶")
-        with st.expander(f"🗑️ 垃圾桶（{len(trash_df)} 筆，可還原）"):
+        show_trash = st.toggle("🗑️ 顯示垃圾桶（還原已刪除的項目）", key="show_trash")
+        if show_trash:
+            trash_df = safe_load(fetch_trash, trash_ws, pd.DataFrame(columns=TRASH_COLS), "垃圾桶")
             if trash_df.empty:
                 st.caption("垃圾桶是空的。")
             else:
