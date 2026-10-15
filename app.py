@@ -9,6 +9,7 @@ import gspread
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ======================= 基本設定 =======================
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
@@ -110,18 +111,67 @@ def _login_tracker():
     return {"fails": 0, "locked_until": 0.0}
 
 
+REMEMBER_DAYS = 30
+COOKIE_NAME = "wealth_auth"
+
+
+def _sign(expiry, key):
+    return hmac.new(key.encode("utf-8"), str(expiry).encode("utf-8"), "sha256").hexdigest()
+
+
+def make_token(key):
+    # 憑證 = 到期時間 + 用密碼簽的簽章；沒有密碼就偽造不出來，換密碼後舊憑證全部失效
+    exp = int(time.time()) + REMEMBER_DAYS * 86400
+    return f"{exp}.{_sign(exp, key)}"
+
+
+def token_valid(token, key):
+    try:
+        exp_s, sig = str(token).split(".", 1)
+        return int(exp_s) > time.time() and hmac.compare_digest(sig, _sign(int(exp_s), key))
+    except (ValueError, TypeError):
+        return False
+
+
+def set_cookie_js(value, days):
+    # 在瀏覽器寫入 / 清除 cookie（days=0 代表刪除）；HTTPS 下會加 Secure
+    components.html(
+        f"<script>document.cookie = '{COOKIE_NAME}={value}; max-age={days * 86400}; path=/; SameSite=Strict'"
+        f" + (location.protocol === 'https:' ? '; Secure' : '');</script>",
+        height=0,
+    )
+
+
 def require_login():
     expected = str(get_secret("APP_PASSWORD", ""))
     if not expected:
         st.error("尚未設定 APP_PASSWORD，為了安全程式已停止。請到 Streamlit Secrets 加入：APP_PASSWORD = 「你的密碼」")
         st.stop()
+
+    # 已登入：「記住我」的裝置不會閒置登出；其他裝置閒置超過 30 分鐘自動登出
     if st.session_state.get("authed"):
-        if time.time() - st.session_state.get("last_active", 0) > IDLE_SECONDS:
+        idle = time.time() - st.session_state.get("last_active", 0) > IDLE_SECONDS
+        if idle and not st.session_state.get("remember"):
             st.session_state.clear()
             st.warning("⏱️ 閒置過久，已自動登出，請重新登入。")
         else:
             st.session_state["last_active"] = time.time()
+            if "set_cookie" in st.session_state:
+                set_cookie_js(st.session_state.pop("set_cookie"), REMEMBER_DAYS)
             return
+
+    # 瀏覽器帶著有效憑證 → 直接登入（剛按過登出的這個連線除外）
+    if not st.session_state.get("no_autologin"):
+        try:
+            tok = st.context.cookies.get(COOKIE_NAME)
+        except Exception:
+            tok = None
+        if tok and token_valid(tok, expected):
+            st.session_state.update(authed=True, remember=True, last_active=time.time())
+            return
+
+    if st.session_state.pop("clear_cookie", False):
+        set_cookie_js("", 0)
 
     tracker = _login_tracker()
     st.title("🔒 我是有錢人")
@@ -132,13 +182,16 @@ def require_login():
 
     with st.form("login_form"):
         pwd = st.text_input("請輸入密碼", type="password")
+        remember = st.checkbox(f"在這台裝置記住我（{REMEMBER_DAYS} 天內免登入）", value=True)
         submitted = st.form_submit_button("登入")
 
     if submitted:
         if hmac.compare_digest(pwd.encode("utf-8"), expected.encode("utf-8")):
             tracker["fails"] = 0
-            st.session_state["authed"] = True
-            st.session_state["last_active"] = time.time()
+            st.session_state.pop("no_autologin", None)
+            st.session_state.update(authed=True, remember=remember, last_active=time.time())
+            if remember:
+                st.session_state["set_cookie"] = make_token(expected)
             st.rerun()
         else:
             tracker["fails"] += 1
@@ -234,24 +287,30 @@ worksheet = sh.get_worksheet(0) if sh else None
 
 
 @st.cache_resource
-def get_settings_worksheet(_sh):
-    if not _sh:
+def _open_ws(_sh, title, rows, cols, init_rows):
+    # 找得到分頁就直接用；找不到就建立並寫入初始內容
+    try:
+        return _sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = _sh.add_worksheet(title=title, rows=rows, cols=cols)
+        ws.append_rows(init_rows)
+        return ws
+
+
+def get_ws(title, rows, cols, init_rows):
+    if not sh:
         return None
     try:
-        return _sh.worksheet("固定支出設定")
-    except gspread.WorksheetNotFound:
-        new_ws = _sh.add_worksheet(title="固定支出設定", rows=100, cols=4)
-        new_ws.append_row(SETTINGS_HEADER)
-        new_ws.append_row(["孝親費", "5000", "現金", "5"])
-        new_ws.append_row(["電信費", "599", "信用卡", "10"])
-        return new_ws
+        return _open_ws(sh, title, rows, cols, init_rows)
+    except Exception as e:
+        st.warning(f"無法取得「{title}」分頁：{e}")
+        return None
 
 
-try:
-    settings_ws = get_settings_worksheet(sh) if sh else None
-except Exception as e:
-    settings_ws = None
-    st.warning(f"無法取得「固定支出設定」分頁：{e}")
+settings_ws = get_ws(
+    "固定支出設定", 100, 4,
+    [SETTINGS_HEADER, ["孝親費", "5000", "現金", "5"], ["電信費", "599", "信用卡", "10"]],
+)
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -292,25 +351,7 @@ fixed_templates = build_templates(settings_rows)
 
 
 # ======================= 預算設定 =======================
-@st.cache_resource
-def get_budget_worksheet(_sh):
-    if not _sh:
-        return None
-    try:
-        return _sh.worksheet("預算設定")
-    except gspread.WorksheetNotFound:
-        ws = _sh.add_worksheet(title="預算設定", rows=50, cols=2)
-        ws.append_row(BUDGET_HEADER)
-        ws.append_row([TOTAL_KEY, 30000])
-        ws.append_row(["伙食", 8000])
-        return ws
-
-
-try:
-    budget_ws = get_budget_worksheet(sh) if sh else None
-except Exception as e:
-    budget_ws = None
-    st.warning(f"無法取得「預算設定」分頁：{e}")
+budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -340,22 +381,6 @@ budgets = build_budgets(budget_rows)
 
 
 # ======================= 分類設定（從試算表讀取） =======================
-@st.cache_resource
-def get_category_worksheet(_sh):
-    if not _sh:
-        return None
-    try:
-        return _sh.worksheet("分類設定")
-    except gspread.WorksheetNotFound:
-        ws = _sh.add_worksheet(title="分類設定", rows=100, cols=2)
-        ws.append_rows(
-            [["類型", "分類"]]
-            + [["支出", c] for c in EXPENSE_CATS]
-            + [["收入", c] for c in INCOME_CATS]
-        )
-        return ws
-
-
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_category_rows(_ws):
     if not _ws:
@@ -363,11 +388,10 @@ def fetch_category_rows(_ws):
     return [pad_row(r, 2) for r in _ws.get_all_values()[1:]]
 
 
-try:
-    cat_ws = get_category_worksheet(sh) if sh else None
-except Exception as e:
-    cat_ws = None
-    st.warning(f"無法取得「分類設定」分頁：{e}")
+cat_ws = get_ws(
+    "分類設定", 100, 2,
+    [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
+)
 
 _cat_rows = safe_load(fetch_category_rows, cat_ws, [], "分類設定")
 _exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
@@ -384,23 +408,7 @@ if "薪資" not in INCOME_CATS:
 
 
 # ======================= 垃圾桶（刪除後可還原） =======================
-@st.cache_resource
-def get_trash_worksheet(_sh):
-    if not _sh:
-        return None
-    try:
-        return _sh.worksheet("垃圾桶")
-    except gspread.WorksheetNotFound:
-        ws = _sh.add_worksheet(title="垃圾桶", rows=500, cols=7)
-        ws.append_row(TRASH_HEADER)
-        return ws
-
-
-try:
-    trash_ws = get_trash_worksheet(sh) if sh else None
-except Exception as e:
-    trash_ws = None
-    st.warning(f"無法取得「垃圾桶」分頁：{e}")
+trash_ws = get_ws("垃圾桶", 500, 7, [TRASH_HEADER])
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -423,25 +431,7 @@ def fetch_trash(_trash_ws):
 
 
 # ======================= 系統設定（預設月薪、儲蓄目標） =======================
-@st.cache_resource
-def get_config_worksheet(_sh):
-    if not _sh:
-        return None
-    try:
-        return _sh.worksheet("系統設定")
-    except gspread.WorksheetNotFound:
-        ws = _sh.add_worksheet(title="系統設定", rows=20, cols=2)
-        ws.append_row(CONFIG_HEADER)
-        ws.append_row([CFG_SALARY, 45000])
-        ws.append_row([CFG_GOAL, 0])
-        return ws
-
-
-try:
-    config_ws = get_config_worksheet(sh) if sh else None
-except Exception as e:
-    config_ws = None
-    st.warning(f"無法取得「系統設定」分頁：{e}")
+config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -657,6 +647,8 @@ if sh and worksheet:
         st.rerun()
     if side_c2.button("🚪 登出"):
         st.session_state.clear()
+        # 清掉這台裝置的「記住我」憑證，並避免剛登出又被舊憑證自動登入
+        st.session_state.update(clear_cookie=True, no_autologin=True)
         st.rerun()
 
     st.sidebar.header("➕ 新增記帳")
