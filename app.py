@@ -54,8 +54,6 @@ INCOME_CATS = ["薪資", "其他收入"]
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
 SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式", "扣款日"]
 BUDGET_HEADER = ["分類", "每月上限"]
-TRASH_HEADER = FIELDS + ["刪除時間"]
-TRASH_COLS = ["_row"] + TRASH_HEADER
 CONFIG_HEADER = ["項目", "值"]
 CFG_SALARY = "預設月薪"
 CFG_GOAL = "儲蓄目標"
@@ -70,7 +68,6 @@ MODE_LIST = "記帳明細"
 MODE_CHART = "圖表分析"
 MODE_BUDGET = "預算追蹤"
 MODE_CAL = "月曆"
-MODE_COMPARE = "比較與年度"
 
 
 def _ver_tuple():
@@ -436,7 +433,6 @@ cat_ws = get_ws(
     "分類設定", 100, 2,
     [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
 )
-trash_ws = get_ws("垃圾桶", 500, 7, [TRASH_HEADER])
 config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
 CFG_SHEETS = (("固定支出設定", 4), ("預算設定", 2), ("分類設定", 2), ("系統設定", 2))
@@ -527,26 +523,6 @@ if "每月固定費用" not in EXPENSE_CATS:
     EXPENSE_CATS.append("每月固定費用")
 if "薪資" not in INCOME_CATS:
     INCOME_CATS.append("薪資")
-
-
-# ======================= 垃圾桶（刪除後可還原） =======================
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_trash(_trash_ws):
-    if not _trash_ws:
-        return pd.DataFrame(columns=TRASH_COLS)
-    raw = _trash_ws.get_all_values()
-    rows = []
-    for i, row in enumerate(raw[1:]):
-        p = pad_row(row, 7)
-        if not any(str(c).strip() for c in p):
-            continue
-        rec = {"_row": i + 2}
-        for name, val in zip(TRASH_HEADER, p):
-            rec[name] = str(val).strip()
-        rows.append(rec)
-    if not rows:
-        return pd.DataFrame(columns=TRASH_COLS)
-    return pd.DataFrame(rows)
 
 
 # ======================= 系統設定（預設月薪、儲蓄目標） =======================
@@ -753,7 +729,6 @@ if sh and worksheet:
     if side_c1.button("重新整理", **STRETCH):
         fetch_data.clear()
         fetch_config_bundle.clear()
-        fetch_trash.clear()
         bump_editor()
         st.rerun()
     if side_c2.button("登出", **STRETCH):
@@ -817,9 +792,12 @@ if sh and worksheet:
 
     st.divider()
 
+    MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL]
+    if st.session_state.get("view_mode") not in MODES:
+        st.session_state.view_mode = MODE_ADD  # 舊連線停在已移除的頁面時，退回第一頁
     view_mode = st.radio(
         "選擇檢視模式：",
-        [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL, MODE_COMPARE],
+        MODES,
         horizontal=True,
         label_visibility="collapsed",
         key="view_mode",
@@ -831,15 +809,35 @@ if sh and worksheet:
         tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算"])
 
         with tab_general:
-            tx_type = st.radio("類型", ["支出", "收入"], horizontal=True)
-            category = st.selectbox("分類", EXPENSE_CATS if tx_type == "支出" else INCOME_CATS)
+            for wkey, lkey in (("gen_type", "_last_type"), ("gen_cat", "_last_cat"), ("gen_pay", "_last_pay")):
+                if wkey not in st.session_state and lkey in st.session_state:
+                    st.session_state[wkey] = st.session_state[lkey]
+            tx_type = st.radio("類型", ["支出", "收入"], horizontal=True, key="gen_type")
+            cat_options = EXPENSE_CATS if tx_type == "支出" else INCOME_CATS
+            if st.session_state.get("gen_cat") not in cat_options:
+                st.session_state.pop("gen_cat", None)  # 切換支出/收入後，舊分類不適用
+            category = st.selectbox("分類", cat_options, key="gen_cat")
             amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
-            pay_method = st.selectbox("付款方式", PAY_OPTIONS)
+            pay_method = st.selectbox("付款方式", PAY_OPTIONS, key="gen_pay")
+            st.session_state.update(_last_type=tx_type, _last_cat=category, _last_pay=pay_method)
             tx_date = st.date_input("日期", value=TODAY)
             note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
 
+            gen_dup = False
+            if amount is not None and amount > 0 and not df.empty:
+                gen_dup = bool((
+                    (df["日期_std"] == str(tx_date)) & (df["類型"] == tx_type) & (df["分類"] == category)
+                    & (df["金額_num"] == float(amount)) & (df["備註"] == note.strip())
+                ).any())
+            allow_gen_dup = True
+            if gen_dup:
+                st.warning(f"{tx_date} 已有一筆完全相同的紀錄（分類、金額、備註都一樣）。")
+                allow_gen_dup = st.checkbox("我確定要再記一筆", key=f"allow_gen_dup_{ver}")
+
             if st.button("送出記帳", type="primary"):
-                if amount is not None and amount > 0:
+                if amount is not None and amount > 0 and not allow_gen_dup:
+                    st.warning("已有相同紀錄，請先勾選「我確定要再記一筆」。")
+                elif amount is not None and amount > 0:
                     try:
                         worksheet.append_row(
                             [str(tx_date), tx_type, category, amount, pay_method, note],
@@ -1106,7 +1104,7 @@ if sh and worksheet:
 
             col1, col2 = st.columns(2)
 
-            # 刪除：先放進「垃圾桶」分頁（可還原），再依列號從主表刪除
+            # 刪除：依列號從主表直接刪除（一次 API 呼叫完成）
             with col1:
                 if st.button("刪除所選項目", **STRETCH):
                     checked = edited_df[edited_df["刪除"] == True].index.tolist()  # noqa: E712
@@ -1119,20 +1117,9 @@ if sh and worksheet:
                                 st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
                                 fetch_data.clear()
                             else:
-                                if trash_ws:
-                                    now_s = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                                    trash_ws.append_rows(
-                                        [
-                                            [r["日期"], r["類型"], r["分類"], to_number(r["金額"]),
-                                             r["付款方式"], r["備註"], now_s]
-                                            for _, r in targets.iterrows()
-                                        ],
-                                        value_input_option="RAW",
-                                    )
-                                    fetch_trash.clear()
                                 n_del = delete_rows(worksheet, targets["_row"])
                                 clear_data_cache()
-                                flash_and_rerun(f"成功刪除 {n_del} 筆項目（可到下方「垃圾桶」還原）！")
+                                flash_and_rerun(f"成功刪除 {n_del} 筆項目！")
                         except Exception as e:
                             st.error(f"刪除失敗：{e}")
 
@@ -1178,69 +1165,13 @@ if sh and worksheet:
         else:
             st.info(f"所選月份 {selected_month} 目前還沒有任何記錄！")
 
-        # ----- 垃圾桶：還原或永久刪除 -----
         st.divider()
-        show_trash = st.toggle("顯示垃圾桶（還原已刪除的項目）", key="show_trash")
-        if show_trash:
-            trash_df = safe_load(fetch_trash, trash_ws, pd.DataFrame(columns=TRASH_COLS), "垃圾桶")
-            if trash_df.empty:
-                st.caption("垃圾桶是空的。")
-            else:
-                td = trash_df[TRASH_HEADER].copy()
-                td.insert(0, "選取", False)
-                edited_trash = st.data_editor(
-                    td,
-                    hide_index=True,
-                    key=f"trash_table_{ver}",
-                    disabled=TRASH_HEADER,
-                    column_config={"選取": st.column_config.CheckboxColumn("選取", width="small")},
-                    **STRETCH,
-                )
-                t1, t2 = st.columns(2)
-                with t1:
-                    if st.button("還原所選項目", **STRETCH):
-                        sel = edited_trash[edited_trash["選取"] == True].index.tolist()  # noqa: E712
-                        if not sel:
-                            st.warning("請先勾選要還原的項目！")
-                        else:
-                            try:
-                                tgt = trash_df.loc[sel]
-                                if not rows_still_match(trash_ws, tgt):
-                                    st.error("垃圾桶資料已變動，請重新整理後再試一次。")
-                                    fetch_trash.clear()
-                                else:
-                                    worksheet.append_rows(
-                                        [
-                                            [r["日期"], r["類型"], r["分類"], to_number(r["金額"]),
-                                             r["付款方式"], r["備註"]]
-                                            for _, r in tgt.iterrows()
-                                        ],
-                                        value_input_option="RAW",
-                                    )
-                                    delete_rows(trash_ws, tgt["_row"])
-                                    fetch_trash.clear()
-                                    clear_data_cache()
-                                    flash_and_rerun(f"已還原 {len(sel)} 筆項目！")
-                            except Exception as e:
-                                st.error(f"還原失敗：{e}")
-                with t2:
-                    if st.button("永久刪除所選項目", **STRETCH):
-                        sel = edited_trash[edited_trash["選取"] == True].index.tolist()  # noqa: E712
-                        if not sel:
-                            st.warning("請先勾選要永久刪除的項目！")
-                        else:
-                            try:
-                                tgt = trash_df.loc[sel]
-                                if not rows_still_match(trash_ws, tgt):
-                                    st.error("垃圾桶資料已變動，請重新整理後再試一次。")
-                                    fetch_trash.clear()
-                                else:
-                                    delete_rows(trash_ws, tgt["_row"])
-                                    fetch_trash.clear()
-                                    bump_editor()
-                                    flash_and_rerun(f"已永久刪除 {len(sel)} 筆項目。")
-                            except Exception as e:
-                                st.error(f"永久刪除失敗：{e}")
+        st.download_button(
+            "下載全部記帳資料（CSV）",
+            df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
+            file_name="記帳_全部資料.csv",
+            mime="text/csv",
+        )
 
     # ---------- 圖表分析 ----------
     elif view_mode == MODE_CHART:
@@ -1487,91 +1418,6 @@ if sh and worksheet:
                             unsafe_allow_html=True,
                         )
 
-    # ---------- 比較與年度 ----------
-    elif view_mode == MODE_COMPARE:
-        prev_month = prev_month_str(selected_month)
-        df_prev = df[df["年月"] == prev_month]
-
-        st.subheader(f"{selected_month} vs {prev_month}（各分類支出）")
-        cur = df_selected[df_selected["類型"] == "支出"].groupby("分類")["金額_num"].sum()
-        prv = df_prev[df_prev["類型"] == "支出"].groupby("分類")["金額_num"].sum()
-        cmp_df = pd.concat([cur.rename(selected_month), prv.rename(prev_month)], axis=1).fillna(0)
-        if cmp_df.empty:
-            st.info("這兩個月都沒有支出紀錄可比較。")
-        else:
-            cmp_df.index.name = "分類"
-            cmp_df = cmp_df.reset_index()
-            cmp_df["差額"] = cmp_df[selected_month] - cmp_df[prev_month]
-            cmp_df["變化%"] = cmp_df.apply(
-                lambda r: round(r["差額"] / r[prev_month] * 100, 1) if r[prev_month] > 0 else None, axis=1
-            )
-            cmp_df = cmp_df.sort_values("差額", ascending=False)
-            top = cmp_df.iloc[0]
-            if top["差額"] > 0:
-                st.info(f"「{top['分類']}」比上月多花 ${top['差額']:,.0f}，是增加最多的分類。")
-            cmp_cfg = {c: st.column_config.NumberColumn(c, format="%d") for c in [selected_month, prev_month, "差額"]}
-            cmp_cfg["變化%"] = st.column_config.NumberColumn("變化%", format="%.1f")
-            st.dataframe(cmp_df, hide_index=True, column_config=cmp_cfg, **STRETCH)
-            melted = cmp_df.melt(
-                id_vars="分類", value_vars=[selected_month, prev_month], var_name="月份", value_name="金額"
-            )
-            show(px.bar(melted, x="分類", y="金額", color="月份", barmode="group", title="各分類支出比較"))
-
-        # ----- 年度總覽 -----
-        st.divider()
-        st.subheader("年度總覽")
-        years = sorted({str(m)[:4] for m in all_months}, reverse=True)
-        sel_year = st.selectbox(
-            "選擇年度", years, key="year_sel",
-            index=years.index(selected_month[:4]) if selected_month[:4] in years else 0,
-        )
-        df_year = df[df["年月"].astype(str).str.startswith(sel_year)]
-        months12 = [f"{sel_year}-{i:02d}" for i in range(1, 13)]
-        inc_m = (
-            df_year[df_year["類型"] == "收入"].groupby("年月")["金額_num"].sum()
-            .reindex(months12, fill_value=0).astype(float)
-        )
-        exp_m = (
-            df_year[df_year["類型"] == "支出"].groupby("年月")["金額_num"].sum()
-            .reindex(months12, fill_value=0).astype(float)
-        )
-        yr = pd.DataFrame({"月份": months12, "收入": inc_m.values, "支出": exp_m.values})
-        yr["結餘"] = yr["收入"] - yr["支出"]
-
-        y1, y2, y3 = st.columns(3)
-        y1.metric(f"{sel_year} 總收入", f"${int(yr['收入'].sum()):,}")
-        y2.metric(f"{sel_year} 總支出", f"${int(yr['支出'].sum()):,}")
-        y3.metric(f"{sel_year} 總結餘", f"${int(yr['結餘'].sum()):,}")
-
-        fig_year = px.bar(
-            yr.melt(id_vars="月份", value_vars=["收入", "支出"], var_name="類型", value_name="金額"),
-            x="月份", y="金額", color="類型", barmode="group", title=f"{sel_year} 每月收入與支出",
-            color_discrete_map={"收入": INCOME_COLOR, "支出": EXPENSE_COLOR},
-        )
-        fig_year.add_scatter(
-            x=yr["月份"], y=yr["結餘"], mode="lines+markers", name="結餘", line=dict(color=ACCENT)
-        )
-        show(fig_year)
-
-        year_exp = df_year[df_year["類型"] == "支出"]
-        if not year_exp.empty:
-            show(px.pie(
-                year_exp, values="金額_num", names="分類", hole=0.45,
-                title=f"{sel_year} 各類別支出佔比",
-                color="分類", color_discrete_map=CAT_COLORS,
-            ))
-
-        st.dataframe(
-            yr, hide_index=True,
-            column_config={c: st.column_config.NumberColumn(c, format="%d") for c in ["收入", "支出", "結餘"]},
-            **STRETCH,
-        )
-        st.download_button(
-            "下載全部記帳資料（CSV）",
-            df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
-            file_name="記帳_全部資料.csv",
-            mime="text/csv",
-        )
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
