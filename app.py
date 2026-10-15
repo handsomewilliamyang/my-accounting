@@ -893,7 +893,7 @@ if sh and worksheet:
 
     view_mode = st.radio(
         "選擇檢視模式：",
-        ["📋 記帳明細列表", "📊 圖表與固定費用", "🎯 預算追蹤", "📅 月曆模式"],
+        ["📋 記帳明細列表", "📊 圖表與固定費用", "🎯 預算追蹤", "📅 月曆模式", "📈 比較與年度"],
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -1310,6 +1310,88 @@ if sh and worksheet:
                         f"<span>{day} 日</span>{total_html}</div>{body}</div>",
                         unsafe_allow_html=True,
                     )
+
+    # ---------- 模式 5：比較與年度 ----------
+    elif view_mode == "📈 比較與年度":
+        prev_month = prev_month_str(selected_month)
+        df_prev = df[df["年月"] == prev_month]
+
+        st.subheader(f"🔄 {selected_month} vs {prev_month}（各分類支出）")
+        cur = df_selected[df_selected["類型"] == "支出"].groupby("分類")["金額_num"].sum()
+        prv = df_prev[df_prev["類型"] == "支出"].groupby("分類")["金額_num"].sum()
+        cmp_df = pd.concat([cur.rename(selected_month), prv.rename(prev_month)], axis=1).fillna(0)
+        if cmp_df.empty:
+            st.info("這兩個月都沒有支出紀錄可比較。")
+        else:
+            cmp_df.index.name = "分類"
+            cmp_df = cmp_df.reset_index()
+            cmp_df["差額"] = cmp_df[selected_month] - cmp_df[prev_month]
+            cmp_df["變化%"] = cmp_df.apply(
+                lambda r: round(r["差額"] / r[prev_month] * 100, 1) if r[prev_month] > 0 else None, axis=1
+            )
+            cmp_df = cmp_df.sort_values("差額", ascending=False)
+            top = cmp_df.iloc[0]
+            if top["差額"] > 0:
+                st.info(f"📌 「{top['分類']}」比上月多花 ${top['差額']:,.0f}，是增加最多的分類。")
+            st.dataframe(cmp_df, hide_index=True, **STRETCH)
+            melted = cmp_df.melt(
+                id_vars="分類", value_vars=[selected_month, prev_month], var_name="月份", value_name="金額"
+            )
+            st.plotly_chart(
+                px.bar(melted, x="分類", y="金額", color="月份", barmode="group", title="各分類支出比較"),
+                **STRETCH,
+            )
+
+        # ----- 年度總覽 -----
+        st.divider()
+        st.subheader("📆 年度總覽")
+        years = sorted({str(m)[:4] for m in all_months}, reverse=True)
+        sel_year = st.selectbox(
+            "選擇年度", years, key="year_sel",
+            index=years.index(selected_month[:4]) if selected_month[:4] in years else 0,
+        )
+        df_year = df[df["年月"].astype(str).str.startswith(sel_year)]
+        months12 = [f"{sel_year}-{i:02d}" for i in range(1, 13)]
+        inc_m = (
+            df_year[df_year["類型"] == "收入"].groupby("年月")["金額_num"].sum()
+            .reindex(months12, fill_value=0).astype(float)
+        )
+        exp_m = (
+            df_year[df_year["類型"] == "支出"].groupby("年月")["金額_num"].sum()
+            .reindex(months12, fill_value=0).astype(float)
+        )
+        yr = pd.DataFrame({"月份": months12, "收入": inc_m.values, "支出": exp_m.values})
+        yr["結餘"] = yr["收入"] - yr["支出"]
+
+        y1, y2, y3 = st.columns(3)
+        y1.metric(f"{sel_year} 總收入", f"${int(yr['收入'].sum()):,}")
+        y2.metric(f"{sel_year} 總支出", f"${int(yr['支出'].sum()):,}")
+        y3.metric(f"{sel_year} 總結餘", f"${int(yr['結餘'].sum()):,}")
+
+        fig_year = px.bar(
+            yr.melt(id_vars="月份", value_vars=["收入", "支出"], var_name="類型", value_name="金額"),
+            x="月份", y="金額", color="類型", barmode="group", title=f"{sel_year} 每月收入與支出",
+        )
+        fig_year.add_scatter(x=yr["月份"], y=yr["結餘"], mode="lines+markers", name="結餘")
+        st.plotly_chart(fig_year, **STRETCH)
+
+        year_exp = df_year[df_year["類型"] == "支出"]
+        if not year_exp.empty:
+            st.plotly_chart(
+                px.pie(
+                    year_exp, values="金額_num", names="分類", hole=0.4,
+                    title=f"{sel_year} 各類別支出佔比",
+                ),
+                **STRETCH,
+            )
+
+        st.dataframe(yr, hide_index=True, **STRETCH)
+        st.download_button(
+            "⬇️ 下載全部記帳資料（CSV）",
+            df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
+            file_name="記帳_全部資料.csv",
+            mime="text/csv",
+        )
 
 else:
     st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
