@@ -182,6 +182,10 @@ st.markdown("""
     .cal-day-total { font-size: 12px; font-weight: 400; opacity: 0.75; }
     .cal-note { font-size: 13px; opacity: 0.7; }
 
+    /* 登入頁：標題置中、表單限寬置中 */
+    div[data-testid="stHeading"] h1 { text-align: center; font-weight: 600; margin-top: 8vh; }
+    div[data-testid="stForm"] { max-width: 420px; margin: 0 auto; border-radius: 12px; padding: 1.4rem; }
+
     /* 帶邊框的容器（預算卡片等） */
     div[data-testid="stVerticalBlockBorderWrapper"] { border-radius: 12px; }
 
@@ -1069,10 +1073,10 @@ if sh and worksheet:
                 mask &= df_selected["備註"].str.contains(kw.strip(), case=False, regex=False)
 
             view = df_selected[mask]
-            st.caption(
-                f"篩選後 {len(view)} 筆｜收入 ${view.loc[view['類型'] == '收入', '金額_num'].sum():,.0f}"
-                f"｜支出 ${view.loc[view['類型'] == '支出', '金額_num'].sum():,.0f}"
-            )
+            v1, v2, v3 = st.columns(3)
+            v1.metric("筆數", f"{len(view)}")
+            v2.metric("收入", f"${view.loc[view['類型'] == '收入', '金額_num'].sum():,.0f}")
+            v3.metric("支出", f"${view.loc[view['類型'] == '支出', '金額_num'].sum():,.0f}")
             # 篩選條件改變時重置編輯狀態，避免修改套錯列
             filter_sig = abs(hash((tuple(cat_filter), tuple(pay_filter), kw.strip())))
 
