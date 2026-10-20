@@ -1,6 +1,5 @@
 streamlit>=1.42
 pandas
 gspread
-streamlit-calendar
 plotly
 Authlib>=1.3.2
