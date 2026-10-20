@@ -1,7 +1,5 @@
-import hmac
 import html
 import re
-import time
 import calendar as py_calendar
 from datetime import date, datetime, timedelta, timezone
 
@@ -9,7 +7,6 @@ import gspread
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import streamlit.components.v1 as components
 
 # ======================= 基本設定 =======================
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
@@ -206,112 +203,53 @@ def show(fig):
     st.plotly_chart(fig, **STRETCH)
 
 
-# ======================= 密碼登入 =======================
-# 密碼只存在「伺服器端」的 Streamlit Secrets（APP_PASSWORD）：
-# 不在程式碼裡、不會傳到瀏覽器，用 F12 看不到；比對也是在伺服器上完成。
-MAX_FAILS = 5
-LOCK_SECONDS = 300
-IDLE_SECONDS = 1800  # 閒置 30 分鐘自動登出
+# ======================= Google 帳號登入 =======================
+# 使用 Streamlit 內建的 st.login()（需要 Streamlit 1.42 以上 + Authlib）。
+# 登入狀態由 Streamlit 伺服器簽章後寫入 cookie（約 30 天），同一個瀏覽器不用再重新登入。
+# 只有 Secrets 裡 ALLOWED_EMAILS 名單內的 Google 帳號才能使用，其他人即使登入 Google 也進不來。
 
 
-@st.cache_resource
-def _login_tracker():
-    # 全站共用的失敗計數（重新整理頁面也無法重置）
-    return {"fails": 0, "locked_until": 0.0}
-
-
-REMEMBER_DAYS = 30
-COOKIE_NAME = "wealth_auth"
-
-
-def _sign(expiry, key):
-    return hmac.new(key.encode("utf-8"), str(expiry).encode("utf-8"), "sha256").hexdigest()
-
-
-def make_token(key):
-    # 憑證 = 到期時間 + 用密碼簽的簽章；沒有密碼就偽造不出來，換密碼後舊憑證全部失效
-    exp = int(time.time()) + REMEMBER_DAYS * 86400
-    return f"{exp}.{_sign(exp, key)}"
-
-
-def token_valid(token, key):
-    try:
-        exp_s, sig = str(token).split(".", 1)
-        return int(exp_s) > time.time() and hmac.compare_digest(sig, _sign(int(exp_s), key))
-    except (ValueError, TypeError):
-        return False
-
-
-def set_cookie_js(value, days):
-    # 在瀏覽器寫入 / 清除 cookie（days=0 代表刪除）；HTTPS 下會加 Secure
-    components.html(
-        f"<script>document.cookie = '{COOKIE_NAME}={value}; max-age={days * 86400}; path=/; SameSite=Strict'"
-        f" + (location.protocol === 'https:' ? '; Secure' : '');</script>",
-        height=0,
-    )
+def parse_allowed(v):
+    """ALLOWED_EMAILS 可以寫成清單，或用逗號 / 換行分隔的字串"""
+    if isinstance(v, str):
+        items = v.replace("\n", ",").split(",")
+    else:
+        try:
+            items = list(v)
+        except TypeError:
+            items = []
+    return {str(x).strip().lower() for x in items if str(x).strip()}
 
 
 def require_login():
-    expected = str(get_secret("APP_PASSWORD", ""))
-    if not expected:
-        st.error("尚未設定 APP_PASSWORD，為了安全程式已停止。請到 Streamlit Secrets 加入：APP_PASSWORD = 「你的密碼」")
+    if not hasattr(st, "login"):
+        st.error("目前的 Streamlit 版本太舊，Google 登入需要 1.42 以上。請把 requirements.txt 改成 streamlit>=1.42 並加上 Authlib>=1.3.2。")
         st.stop()
 
-    # 已登入：「記住我」的裝置不會閒置登出；其他裝置閒置超過 30 分鐘自動登出
-    if st.session_state.get("authed"):
-        idle = time.time() - st.session_state.get("last_active", 0) > IDLE_SECONDS
-        if idle and not st.session_state.get("remember"):
-            st.session_state.clear()
-            st.warning("閒置過久，已自動登出，請重新登入。")
-        else:
-            st.session_state["last_active"] = time.time()
-            if "set_cookie" in st.session_state:
-                set_cookie_js(st.session_state.pop("set_cookie"), REMEMBER_DAYS)
-            return
-
-    # 瀏覽器帶著有效憑證 → 直接登入（剛按過登出的這個連線除外）
-    if not st.session_state.get("no_autologin"):
-        try:
-            tok = st.context.cookies.get(COOKIE_NAME)
-        except Exception:
-            tok = None
-        if tok and token_valid(tok, expected):
-            st.session_state.update(authed=True, remember=True, last_active=time.time())
-            return
-
-    if st.session_state.pop("clear_cookie", False):
-        set_cookie_js("", 0)
-
-    tracker = _login_tracker()
-    st.title("我是有錢人")
-    wait = tracker["locked_until"] - time.time()
-    if wait > 0:
-        st.error(f"錯誤次數過多，請 {int(wait // 60)} 分 {int(wait % 60)} 秒後再試。")
+    if "auth" not in st.secrets:
+        st.error("尚未設定 Google 登入。請到 Streamlit Secrets 加入 [auth] 區塊（redirect_uri、cookie_secret、client_id、client_secret、server_metadata_url）。")
         st.stop()
 
-    with st.form("login_form"):
-        pwd = st.text_input("請輸入密碼", type="password")
-        remember = st.checkbox(f"在這台裝置記住我（{REMEMBER_DAYS} 天內免登入）", value=True)
-        submitted = st.form_submit_button("登入")
+    allowed = parse_allowed(get_secret("ALLOWED_EMAILS", ""))
+    if not allowed:
+        st.error("尚未設定 ALLOWED_EMAILS，為了安全程式已停止。請到 Streamlit Secrets 加入：ALLOWED_EMAILS = [\"你的信箱@gmail.com\"]")
+        st.stop()
 
-    if submitted:
-        if hmac.compare_digest(pwd.encode("utf-8"), expected.encode("utf-8")):
-            tracker["fails"] = 0
-            st.session_state.pop("no_autologin", None)
-            st.session_state.update(authed=True, remember=remember, last_active=time.time())
-            if remember:
-                st.session_state["set_cookie"] = make_token(expected)
-            st.rerun()
-        else:
-            tracker["fails"] += 1
-            if tracker["fails"] >= MAX_FAILS:
-                tracker["locked_until"] = time.time() + LOCK_SECONDS
-                tracker["fails"] = 0
-                st.error("錯誤次數過多，已暫時鎖定 5 分鐘。")
-            else:
-                time.sleep(1)  # 拖慢暴力猜測
-                st.error(f"密碼錯誤（還有 {MAX_FAILS - tracker['fails']} 次機會）")
-    st.stop()
+    if not st.user.is_logged_in:
+        st.title("我是有錢人")
+        st.caption("請使用 Google 帳號登入")
+        _, mid, _ = st.columns([1, 1, 1])
+        mid.button("使用 Google 帳號登入", type="primary", on_click=st.login, **STRETCH)
+        st.stop()
+
+    email = str(st.user.get("email", "") or "").strip().lower()
+    verified = st.user.get("email_verified", True)
+    if email not in allowed or verified is False:
+        st.title("我是有錢人")
+        st.error(f"此帳號（{email or '未知'}）沒有使用權限。")
+        _, mid, _ = st.columns([1, 1, 1])
+        mid.button("改用其他帳號登入", on_click=st.logout, **STRETCH)
+        st.stop()
 
 
 require_login()
@@ -731,11 +669,7 @@ if sh and worksheet:
         fetch_config_bundle.clear()
         bump_editor()
         st.rerun()
-    if side_c2.button("登出", **STRETCH):
-        st.session_state.clear()
-        # 清掉這台裝置的「記住我」憑證，並避免剛登出又被舊憑證自動登入
-        st.session_state.update(clear_cookie=True, no_autologin=True)
-        st.rerun()
+    side_c2.button("登出", on_click=st.logout, **STRETCH)
 
     # ---------- 月份篩選（含上月／下月按鈕） ----------
     current_month_str = TODAY.strftime("%Y-%m")
