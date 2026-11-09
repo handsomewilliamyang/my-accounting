@@ -93,7 +93,10 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 div[data-testid="stHeading"] h1 { text-align:center; font-weight:600; margin-top:8vh; }
 
 @media (min-width:900px) {
-  div.block-container, div[data-testid="stMainBlockContainer"] { padding:4.5rem 1.5rem 4rem; }
+  html { font-size:18px; }  /* 電腦版整體放大約 12%（手機維持 16px） */
+  div.block-container, div[data-testid="stMainBlockContainer"] { max-width:1180px; padding:4.5rem 1.5rem 4rem; }
+  .cal-card { height:150px; }
+  .hero-label, .hero-delta, .bud-sub, .cal-day-total, .cal-note { font-size:.9rem; }
   .app-header h1 { font-size:1.75rem; }
   .hero-amount { font-size:2.4rem; }
 }
