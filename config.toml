@@ -1,0 +1,20 @@
+[theme]
+base = "dark"
+font = "sans serif"
+baseRadius = "0.7rem"
+
+# 深色（預設，你主要使用）
+[theme.dark]
+primaryColor = "#6FA3D8"
+backgroundColor = "#0F1419"
+secondaryBackgroundColor = "#171D25"
+textColor = "#E8ECF0"
+borderColor = "#2A323C"
+
+# 淺色（系統設為淺色時）
+[theme.light]
+primaryColor = "#2F5D8A"
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B2430"
+borderColor = "#E3E6EA"
