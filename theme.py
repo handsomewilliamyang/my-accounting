@@ -19,10 +19,8 @@ CSS = """
 
 :root {
   --income:#3FAF86; --expense:#E0675F; --warning:#E0A030; --primary:#5B93D3;
-  --line:rgba(128,128,128,.25); --card:rgba(128,128,128,.07); --track:rgba(128,128,128,.22);
-  --nav-bg:#0F1419;
+  --line:rgba(128,128,128,.28); --card:rgba(128,128,128,.09); --track:rgba(128,128,128,.25);
 }
-@media (prefers-color-scheme: light) { :root { --nav-bg:#F6F7F9; } }
 
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
@@ -30,7 +28,7 @@ CSS = """
 }
 footer { display:none; }
 div.block-container, div[data-testid="stMainBlockContainer"] {
-  max-width:1080px; padding:1.5rem 1rem 7rem;
+  max-width:1080px; padding:1.5rem 1rem 4rem;
 }
 .stApp h3 { font-size:1.125rem; font-weight:600; }
 .stApp h4 { font-size:.95rem; font-weight:600; opacity:.7; }
@@ -71,16 +69,9 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 .bud-ok > i { background:var(--income); } .bud-warn > i { background:var(--warning); } .bud-over > i { background:var(--expense); }
 .t-ok { color:var(--income); } .t-warn { color:var(--warning); } .t-over { color:var(--expense); font-weight:600; }
 
-/* 底部固定導覽（st.segmented_control） */
-.st-key-view_mode {
-  position:fixed !important; left:0; right:0; bottom:0; width:100% !important; z-index:999;
-  background:var(--nav-bg); border-top:1px solid var(--line);
-  padding:8px 12px calc(8px + env(safe-area-inset-bottom));
-}
-.st-key-view_mode > div, .st-key-view_mode [data-testid="stButtonGroup"] {
-  max-width:560px; margin:0 auto; width:100%;
-}
-.st-key-view_mode button { flex:1 1 0; min-height:44px; }
+/* 主導覽（st.segmented_control，全部使用原生配色，不覆蓋顏色） */
+.st-key-view_mode { margin:8px 0 20px; }
+.st-key-view_mode button { min-height:44px; }
 
 /* 月曆 */
 .cal-card { background:var(--card); border:1px solid var(--line); border-radius:10px;
@@ -95,7 +86,7 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 div[data-testid="stHeading"] h1 { text-align:center; font-weight:600; margin-top:8vh; }
 
 @media (min-width:900px) {
-  div.block-container, div[data-testid="stMainBlockContainer"] { padding:2rem 1.5rem 7rem; }
+  div.block-container, div[data-testid="stMainBlockContainer"] { padding:2rem 1.5rem 4rem; }
   .app-header h1 { font-size:1.75rem; }
   .hero-amount { font-size:2.4rem; }
 }
