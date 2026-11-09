@@ -168,6 +168,37 @@ def budget_card(name, spent, limit):
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
 
+def force_dark_theme():
+    """備援：config.toml 沒生效時，由程式直接設定深色主題，並重跑一次讓瀏覽器套用"""
+    try:
+        current = st.context.theme.type
+    except Exception:
+        current = None
+    if current == "dark" or st.session_state.get("_dark_tried"):
+        return
+    st.session_state["_dark_tried"] = True
+    try:
+        from streamlit import config as _cfg
+        for key, val in {
+            "theme.base": "dark",
+            "theme.primaryColor": "#6FA3D8",
+            "theme.backgroundColor": "#0F1419",
+            "theme.secondaryBackgroundColor": "#171D25",
+            "theme.textColor": "#E8ECF0",
+            "theme.borderColor": "#2A323C",
+        }.items():
+            try:
+                _cfg.set_option(key, val)
+            except Exception:
+                pass
+    except Exception:
+        return
+    st.rerun()
+
+
+force_dark_theme()
+
+
 def get_secret(name, default=""):
     """讀取 Secrets（不分大小寫：SPREADSHEET_URL / spreadsheet_url 都可以）"""
     for k in (name, name.lower(), name.upper()):
