@@ -531,7 +531,7 @@ if sh and worksheet:
 
     # ---------- 頂部：標題 + 小圖示按鈕 ----------
     with st.container(key="topbar"):
-        h1, h2, h3 = st.columns([6, 1, 1])
+        h1, h2, h3 = st.columns([8, 1.2, 1.2])
         h1.markdown(HEADER_HTML, unsafe_allow_html=True)
         if h2.button("", icon=":material/refresh:", help="重新整理", key="btn_refresh", **STRETCH):
             fetch_data.clear()
@@ -599,14 +599,17 @@ if sh and worksheet:
     # ---------- 底部固定導覽列（樣式見 theme.py） ----------
     MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL]
     if st.session_state.get("view_mode") not in MODES:
-        st.session_state.view_mode = MODE_ADD  # 舊連線停在已移除的頁面時，退回第一頁
-    view_mode = st.radio(
-        "選擇檢視模式：",
+        # 舊連線停在已移除的頁面、或使用者再點一次取消選取時，退回上一頁
+        st.session_state.view_mode = st.session_state.get("_last_mode", MODE_ADD)
+    view_mode = st.segmented_control(
+        "選擇檢視模式",
         MODES,
-        horizontal=True,
         label_visibility="collapsed",
         key="view_mode",
+        **STRETCH,
     )
+    view_mode = view_mode or MODE_ADD
+    st.session_state["_last_mode"] = view_mode
 
     # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
