@@ -5,7 +5,6 @@ from datetime import date, datetime, timedelta, timezone
 
 import gspread
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 # ======================= 視覺主題 =======================
@@ -22,8 +21,6 @@ CAT_COLORS = {
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap');
-
 :root {
   --income:#3FAF86; --expense:#E0675F; --warning:#E0A030; --primary:#5B93D3;
   --line:rgba(128,128,128,.28); --card:rgba(128,128,128,.09); --track:rgba(128,128,128,.25);
@@ -31,7 +28,7 @@ CSS = """
 
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-  font-family:"Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;
 }
 footer { display:none; }
 div.block-container, div[data-testid="stMainBlockContainer"] {
@@ -89,6 +86,10 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 .cal-day-total { font-size:.75rem; font-weight:500; font-variant-numeric:tabular-nums; }
 .cal-note { font-size:.75rem; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
 
+.cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; }
+.cal-grid .cal-card { margin-bottom:0; }
+.cal-wd { text-align:center; font-weight:600; opacity:.7; font-size:.9rem; }
+
 /* 登入頁 */
 div[data-testid="stHeading"] h1 { text-align:center; font-weight:600; margin-top:8vh; }
 
@@ -116,7 +117,7 @@ def theme_show(fig, stretch):
         title=dict(font=dict(size=15), x=0, xanchor="left"),
         legend=dict(title_text="", orientation="h", y=-0.2, x=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, Noto Sans TC, sans-serif", size=12),
+        font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
     )
     fig.update_xaxes(showgrid=False, linecolor="rgba(128,128,128,.3)")
     fig.update_yaxes(gridcolor="rgba(128,128,128,.15)", zeroline=False)
@@ -223,7 +224,14 @@ def today():
 
 TODAY = today()
 
-px.defaults.color_discrete_sequence = PALETTE
+
+
+def load_px():
+    """plotly 只在「圖表」頁才匯入，加快啟動並省記憶體"""
+    import plotly.express as px_
+    px_.defaults.color_discrete_sequence = PALETTE
+    return px_
+
 
 # 統一的選項清單（支出/收入分類之後會被「分類設定」分頁覆蓋）
 PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
@@ -400,29 +408,30 @@ except Exception as e:
 
 
 @st.cache_resource
-def get_main_ws(_sh):
-    return _sh.get_worksheet(0)
-
-
-worksheet = get_main_ws(sh) if sh else None
+def get_sheet_map(_sh):
+    # 只打 1 次 API 就取回所有分頁（原本每個分頁各查一次）
+    return {w.title: w for w in _sh.worksheets()}
 
 
 @st.cache_resource
-def _open_ws(_sh, title, rows, cols, init_rows):
-    # 找得到分頁就直接用；找不到就建立並寫入初始內容
-    try:
-        return _sh.worksheet(title)
-    except gspread.WorksheetNotFound:
-        ws = _sh.add_worksheet(title=title, rows=rows, cols=cols)
-        ws.append_rows(init_rows)
-        return ws
+def get_main_ws(_sh):
+    return next(iter(get_sheet_map(_sh).values()))  # 第一個分頁 = 記帳主表
+
+
+worksheet = get_main_ws(sh) if sh else None
 
 
 def get_ws(title, rows, cols, init_rows):
     if not sh:
         return None
     try:
-        return _open_ws(sh, title, rows, cols, init_rows)
+        m = get_sheet_map(sh)
+        if title in m:
+            return m[title]
+        ws = sh.add_worksheet(title=title, rows=rows, cols=cols)
+        ws.append_rows(init_rows)
+        get_sheet_map.clear()
+        return ws
     except Exception as e:
         st.warning(f"無法取得「{title}」分頁：{e}")
         return None
@@ -802,7 +811,8 @@ if sh and worksheet:
     if view_mode == MODE_ADD:
         tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算"])
 
-        with tab_general:
+        @st.fragment
+        def add_entry_form():
             for wkey, lkey in (("gen_type", "_last_type"), ("gen_cat", "_last_cat"), ("gen_pay", "_last_pay")):
                 if wkey not in st.session_state and lkey in st.session_state:
                     st.session_state[wkey] = st.session_state[lkey]
@@ -843,6 +853,9 @@ if sh and worksheet:
                         st.error(f"寫入失敗: {e}")
                 else:
                     st.warning("請輸入有效的金額！")
+
+        with tab_general:
+            add_entry_form()
 
         with tab_salary:
             with st.container(border=True):
@@ -1169,6 +1182,7 @@ if sh and worksheet:
 
     # ---------- 圖表分析 ----------
     elif view_mode == MODE_CHART:
+        px = load_px()
         # 近 12 個月收支趨勢
         if not df.empty:
             valid = df[df["年月"].str.fullmatch(r"\d{4}-\d{2}", na=False)]
@@ -1342,63 +1356,47 @@ if sh and worksheet:
             cal_matrix = py_calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
 
             weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
-            cols = st.columns(7)
-            for i, day_name in enumerate(weekdays):
-                cols[i].markdown(
-                    f"<div style='text-align:center; font-weight:600; opacity:.7; font-size:.9rem;'>{day_name}</div>",
-                    unsafe_allow_html=True,
-                )
-
+            by_day = {d: g for d, g in df_selected.groupby("日期_std")} if not df_selected.empty else {}
             today_str = TODAY.strftime("%Y-%m-%d")
+
+            cells = ["".join(f"<div class='cal-wd'>{w}</div>" for w in weekdays)]
             for week in cal_matrix:
-                cols = st.columns(7)
-                for i, day in enumerate(week):
-                    with cols[i]:
-                        if day == 0:
-                            st.markdown(
-                                "<div class='cal-card' style='opacity: 0.2;'><div class='cal-day-header'>-</div></div>",
-                                unsafe_allow_html=True,
+                for day in week:
+                    if day == 0:
+                        cells.append("<div class='cal-card' style='opacity:.2'></div>")
+                        continue
+                    date_str = f"{year}-{month:02d}-{day:02d}"
+                    body, day_net, n_extra = "", 0, 0
+                    g = by_day.get(date_str)
+                    if g is not None:
+                        for k, rec in enumerate(g[["類型", "分類", "備註", "金額_num"]].to_dict("records")):
+                            is_exp = rec["類型"] == "支出"
+                            color = EXPENSE_COLOR if is_exp else INCOME_COLOR
+                            sign = "-" if is_exp else "+"
+                            amt = rec["金額_num"]
+                            day_net += -amt if is_exp else amt
+                            if k >= 3:
+                                n_extra += 1
+                                continue
+                            body += (
+                                f"<div style='margin-bottom:6px;'>"
+                                f"<span style='color:{color}; font-size:13px; font-weight:600;'>"
+                                f"{sign}${amt:,.0f} ({html.escape(str(rec['分類']))})</span>"
+                                f"<span class='cal-note'>{html.escape(str(rec['備註']))}</span>"
+                                f"</div>"
                             )
-                            continue
-
-                        date_str = f"{year}-{month:02d}-{day:02d}"
-                        body = ""
-                        day_net = 0
-                        n_extra = 0
-                        if not df_selected.empty:
-                            day_records = df_selected[df_selected["日期_std"] == date_str]
-                            for k, (_, row) in enumerate(day_records.iterrows()):
-                                is_exp = row["類型"] == "支出"
-                                color = EXPENSE_COLOR if is_exp else INCOME_COLOR
-                                sign = "-" if is_exp else "+"
-                                amt = row["金額_num"]
-                                day_net += -amt if is_exp else amt
-                                if k >= 3:
-                                    n_extra += 1
-                                    continue
-                                body += (
-                                    f"<div style='margin-bottom: 6px;'>"
-                                    f"<span style='color:{color}; font-size:13px; font-weight:600;'>"
-                                    f"{sign}${amt:,.0f} ({html.escape(str(row['分類']))})</span>"
-                                    f"<span class='cal-note'>{html.escape(str(row['備註']))}</span>"
-                                    f"</div>"
-                                )
-                        if n_extra:
-                            body += f"<div class='cal-note'>另 {n_extra} 筆…</div>"
-                        total_html = ""
-                        if body:
-                            net_color = INCOME_COLOR if day_net >= 0 else EXPENSE_COLOR
-                            total_html = (
-                                f"<span class='cal-day-total' style='color:{net_color};'>"
-                                f"淨 {day_net:+,.0f}</span>"
-                            )
-                        today_cls = " today" if date_str == today_str else ""
-                        st.markdown(
-                            f"<div class='cal-card{today_cls}'><div class='cal-day-header'>"
-                            f"<span>{day}</span>{total_html}</div>{body}</div>",
-                            unsafe_allow_html=True,
-                        )
-
+                    if n_extra:
+                        body += f"<div class='cal-note'>另 {n_extra} 筆…</div>"
+                    total_html = ""
+                    if body:
+                        net_color = INCOME_COLOR if day_net >= 0 else EXPENSE_COLOR
+                        total_html = f"<span class='cal-day-total' style='color:{net_color};'>淨 {day_net:+,.0f}</span>"
+                    today_cls = " today" if date_str == today_str else ""
+                    cells.append(
+                        f"<div class='cal-card{today_cls}'><div class='cal-day-header'>"
+                        f"<span>{day}</span>{total_html}</div>{body}</div>"
+                    )
+            st.markdown(f"<div class='cal-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
 
 else:
     st.markdown(HEADER_HTML, unsafe_allow_html=True)
