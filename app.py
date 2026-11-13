@@ -8,8 +8,12 @@ import pandas as pd
 import streamlit as st
 
 # ======================= 視覺主題 =======================
+# 設計方向：Stripe 式的「數字優先」金融儀表板 + Apple 式的柔和圓角與留白
+# 設計 token：
+#   間距 4 / 8 / 12 / 16 / 24   圓角 10 / 14 / 20   陰影 2 層（卡片、浮起）
+#   字級 12 / 13 / 15 / 18 / 24 / 36（數字一律 tabular-nums）
 
-ACCENT = "#5B93D3"
+ACCENT = "#6FA3D8"
 INCOME_COLOR = "#3FAF86"
 EXPENSE_COLOR = "#E0675F"
 WARN_COLOR = "#E0A030"
@@ -21,87 +25,199 @@ CAT_COLORS = {
 
 CSS = """
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap');
+
 :root {
-  --income:#3FAF86; --expense:#E0675F; --warning:#E0A030; --primary:#5B93D3;
-  --line:rgba(128,128,128,.28); --card:rgba(128,128,128,.09); --track:rgba(128,128,128,.25);
+  /* 色彩 */
+  --primary:#6FA3D8; --primary-soft:rgba(111,163,216,.16);
+  --income:#3FAF86;  --income-soft:rgba(63,175,134,.14);
+  --expense:#E0675F; --expense-soft:rgba(224,103,95,.14);
+  --warning:#E0A030;
+  /* 中性色（半透明，深淺色主題都適用） */
+  --line:rgba(128,128,128,.22);
+  --card:rgba(128,128,128,.08);
+  --card-hover:rgba(128,128,128,.13);
+  --track:rgba(128,128,128,.22);
+  /* 圓角 */
+  --r-sm:10px; --r-md:14px; --r-lg:20px;
+  /* 陰影 */
+  --shadow-card:0 1px 2px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.10);
+  --shadow-lift:0 6px 20px rgba(0,0,0,.22);
+  --ease:cubic-bezier(.2,.7,.2,1);
 }
 
+/* ---------- 全域 ---------- */
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-  font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;
+  font-family:"Inter","PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;
+  -webkit-font-smoothing:antialiased;
 }
 footer { display:none; }
 div.block-container, div[data-testid="stMainBlockContainer"] {
   max-width:1080px; padding:4.5rem 1rem 4rem;
 }
-.stApp h3 { font-size:1.125rem; font-weight:600; }
-.stApp h4 { font-size:.95rem; font-weight:600; opacity:.7; }
+.stApp h3 { font-size:1.125rem; font-weight:600; letter-spacing:.01em; margin-top:.5rem; }
+.stApp h4 { font-size:.8rem; font-weight:600; opacity:.6; letter-spacing:.08em; text-transform:uppercase; }
 .stApp hr { border-color:var(--line) !important; margin:1.5rem 0; }
+.stApp [data-testid="stCaptionContainer"] { opacity:.65; }
 
-/* 標題 */
-.app-header h1 { font-size:1.5rem; font-weight:600; line-height:1.3; margin:0; padding:0; }
-.app-header p { margin:.2rem 0 0; opacity:.6; font-size:.85rem; }
+/* ---------- 標題 ---------- */
+.app-header h1 { font-size:1.5rem; font-weight:700; line-height:1.3; margin:0; padding:0; letter-spacing:.01em; }
+.app-header p { margin:.2rem 0 0; opacity:.55; font-size:.85rem; }
 .st-key-topbar div[data-testid="stHorizontalBlock"],
 .st-key-month_nav div[data-testid="stHorizontalBlock"] {
   flex-direction:row !important; flex-wrap:nowrap !important; align-items:center; gap:8px;
 }
 .st-key-topbar div[data-testid="stColumn"], .st-key-month_nav div[data-testid="stColumn"] { min-width:0 !important; }
 
-/* 觸控高度 */
-.stButton > button, .stDownloadButton > button { min-height:44px; font-weight:500; }
+/* ---------- 按鈕（觸控高度 44px） ---------- */
+.stButton > button, .stDownloadButton > button {
+  min-height:44px; font-weight:500; border-radius:var(--r-md);
+  border:1px solid var(--line);
+  transition:transform .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease);
+}
+.stButton > button:hover, .stDownloadButton > button:hover {
+  border-color:var(--primary); transform:translateY(-1px); box-shadow:var(--shadow-lift);
+}
+.stButton > button:active, .stDownloadButton > button:active { transform:translateY(0) scale(.98); box-shadow:none; }
+.stButton > button[kind="primary"] {
+  background:linear-gradient(135deg,#6FA3D8 0%,#4F86C6 100%);
+  border:none; color:#fff; font-weight:600;
+  box-shadow:0 2px 10px rgba(79,134,198,.35);
+}
+.stButton > button[kind="primary"]:hover { filter:brightness(1.08); box-shadow:0 6px 18px rgba(79,134,198,.45); }
+.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
+  outline:2px solid var(--primary); outline-offset:2px;
+}
 .st-key-btn_delete button { color:var(--expense) !important; border-color:var(--expense) !important; }
+.st-key-btn_delete button:hover { background:var(--expense-soft) !important; }
 
-/* 總覽卡 */
-.hero { background:var(--card); border:1px solid var(--line); border-radius:16px;
-        padding:18px 20px; margin:14px 0 10px; font-variant-numeric:tabular-nums; }
-.hero-label { opacity:.65; font-size:.8rem; }
-.hero-amount { font-size:2.1rem; font-weight:600; line-height:1.2; margin:2px 0 4px; }
-.hero-delta { font-size:.8rem; opacity:.9; }
-.hero-delta .mut { opacity:.65; }
-.hero-row { display:flex; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+/* ---------- 表單元件 ---------- */
+.stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {
+  border-radius:var(--r-sm) !important;
+}
+div[data-baseweb="input"], div[data-baseweb="select"] > div, div[data-baseweb="base-input"] {
+  border-radius:var(--r-sm) !important;
+}
+div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {
+  box-shadow:0 0 0 2px var(--primary-soft) !important;
+}
+.stApp label p { font-size:.85rem; font-weight:500; opacity:.8; }
+div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:var(--r-md) !important; }
+
+/* ---------- 分頁籤（記一筆 / 薪資 / 固定 / 預算） ---------- */
+.stTabs [data-baseweb="tab-list"] { gap:4px; border-bottom:1px solid var(--line); }
+.stTabs [data-baseweb="tab"] { height:44px; padding:0 14px; border-radius:var(--r-sm) var(--r-sm) 0 0; font-weight:500; }
+.stTabs [aria-selected="true"] { font-weight:600; }
+.stTabs [data-baseweb="tab-highlight"] { background:var(--primary) !important; height:3px; border-radius:3px; }
+
+/* ---------- 內建 metric 卡 ---------- */
+div[data-testid="stMetric"] {
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:12px 14px; font-variant-numeric:tabular-nums;
+}
+div[data-testid="stMetricLabel"] p { font-size:.8rem; opacity:.65; }
+div[data-testid="stMetricValue"] { font-weight:600; }
+
+/* ---------- 提示框、進度條、表格 ---------- */
+div[data-testid="stAlert"] { border-radius:var(--r-md); border:1px solid var(--line); }
+div[data-testid="stProgress"] > div > div { border-radius:999px; }
+div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+  border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden;
+}
+div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(--line); }
+
+/* ---------- 總覽卡（Hero） ---------- */
+.hero {
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(111,163,216,.22) 0%, rgba(111,163,216,0) 60%),
+    var(--card);
+  border:1px solid var(--line); border-radius:var(--r-lg);
+  padding:20px 22px; margin:16px 0 12px; box-shadow:var(--shadow-card);
+  font-variant-numeric:tabular-nums;
+}
+.hero-label { opacity:.6; font-size:.8rem; letter-spacing:.04em; }
+.hero-amount { font-size:2.25rem; font-weight:700; line-height:1.15; margin:4px 0 8px; letter-spacing:-.01em; }
+.hero-delta { font-size:.8rem; }
+.hero-delta .mut { opacity:.6; margin-right:4px; }
+.hero-row { display:flex; gap:12px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
 .hero-col { flex:1; min-width:0; }
-.hero-col .v { font-size:1.15rem; font-weight:600; }
+.hero-col .v { font-size:1.2rem; font-weight:600; margin:2px 0 4px; }
 .pos { color:var(--income); } .neg { color:var(--expense); }
+.pill { display:inline-block; padding:1px 8px; border-radius:999px; font-weight:600; font-size:.78rem; }
+.pill.pos { background:var(--income-soft); }
+.pill.neg { background:var(--expense-soft); }
 
-/* 預算卡 */
-.bud { background:var(--card); border:1px solid var(--line); border-radius:14px;
-       padding:14px 16px; margin-bottom:10px; font-variant-numeric:tabular-nums; }
+/* ---------- 預算卡 ---------- */
+.bud {
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:14px 16px; margin-bottom:10px; font-variant-numeric:tabular-nums;
+  transition:background .15s var(--ease), border-color .15s var(--ease);
+}
+.bud:hover { background:var(--card-hover); border-color:rgba(128,128,128,.4); }
 .bud-top { display:flex; justify-content:space-between; gap:8px; font-size:.95rem; }
-.bud-sub { opacity:.65; font-size:.8rem; margin:2px 0 10px; }
+.bud-sub { opacity:.6; font-size:.8rem; margin:2px 0 10px; }
 .bud-bar { height:8px; border-radius:999px; background:var(--track); overflow:hidden; }
-.bud-bar > i { display:block; height:100%; border-radius:999px; }
-.bud-ok > i { background:var(--income); } .bud-warn > i { background:var(--warning); } .bud-over > i { background:var(--expense); }
-.t-ok { color:var(--income); } .t-warn { color:var(--warning); } .t-over { color:var(--expense); font-weight:600; }
+.bud-bar > i { display:block; height:100%; border-radius:999px; animation:grow .7s var(--ease) both; transform-origin:left; }
+.bud-ok > i   { background:linear-gradient(90deg,#3FAF86,#5CCBA3); }
+.bud-warn > i { background:linear-gradient(90deg,#E0A030,#F0BE5A); }
+.bud-over > i { background:linear-gradient(90deg,#E0675F,#F08A83); }
+.t-ok { color:var(--income); font-weight:600; } .t-warn { color:var(--warning); font-weight:600; } .t-over { color:var(--expense); font-weight:700; }
+@keyframes grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
 
-/* 主導覽（原生 segmented_control，不覆蓋顏色） */
+/* ---------- 主導覽（原生 segmented_control） ---------- */
 .st-key-view_mode { margin:8px 0 20px; }
-.st-key-view_mode button { min-height:44px; }
+.st-key-view_mode button { min-height:44px; font-weight:500; }
 
-/* 月曆 */
-.cal-card { background:var(--card); border:1px solid var(--line); border-radius:10px;
-            padding:8px 10px; height:132px; overflow:hidden; margin-bottom:8px; }
-.cal-card.today { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary); }
-.cal-day-header { font-size:.8rem; font-weight:600; border-bottom:1px solid var(--line);
-                  padding-bottom:4px; margin-bottom:6px; display:flex; justify-content:space-between; }
-.cal-day-total { font-size:.75rem; font-weight:500; font-variant-numeric:tabular-nums; }
-.cal-note { font-size:.75rem; opacity:.65; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
-
+/* ---------- 月曆 ---------- */
 .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; }
+.cal-card {
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-sm);
+  padding:8px 10px; height:132px; overflow:hidden; margin-bottom:8px;
+  transition:background .15s var(--ease), transform .15s var(--ease);
+}
 .cal-grid .cal-card { margin-bottom:0; }
-.cal-wd { text-align:center; font-weight:600; opacity:.7; font-size:.9rem; }
+.cal-card:hover { background:var(--card-hover); }
+.cal-card.empty { opacity:.2; background:transparent; border-style:dashed; }
+.cal-card.today { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary), 0 0 14px var(--primary-soft); }
+.cal-day-header {
+  font-size:.8rem; font-weight:600; border-bottom:1px solid var(--line);
+  padding-bottom:4px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;
+}
+.cal-card.today .cal-day-header > span:first-child {
+  background:var(--primary); color:#fff; border-radius:999px; padding:0 7px; min-width:22px; text-align:center;
+}
+.cal-day-total { font-size:.75rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.cal-amt { font-size:.8rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.cal-item { margin-bottom:6px; }
+.cal-note { font-size:.75rem; opacity:.6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+.cal-wd { text-align:center; font-weight:600; opacity:.65; font-size:.85rem; padding:4px 0; }
 
-/* 登入頁 */
-div[data-testid="stHeading"] h1 { text-align:center; font-weight:600; margin-top:8vh; }
+/* ---------- 登入頁 ---------- */
+div[data-testid="stHeading"] h1 { text-align:center; font-weight:700; margin-top:8vh; }
 
+/* ---------- 手機版（≤ 640px）：卡片更緊湊、月曆格縮小 ---------- */
+@media (max-width:640px) {
+  .hero { padding:16px; border-radius:var(--r-md); }
+  .hero-amount { font-size:1.9rem; }
+  .hero-col .v { font-size:1.05rem; }
+  .cal-grid { gap:4px; }
+  .cal-card { height:96px; padding:6px; }
+  .cal-amt, .cal-day-total, .cal-note { font-size:.65rem; }
+}
+
+/* ---------- 電腦版 ---------- */
 @media (min-width:900px) {
-  html { font-size:18px; }  /* 電腦版整體放大約 12%（手機維持 16px） */
+  html { font-size:18px; }
   div.block-container, div[data-testid="stMainBlockContainer"] { max-width:1180px; padding:4.5rem 1.5rem 4rem; }
   .cal-card { height:150px; }
   .hero-label, .hero-delta, .bud-sub, .cal-day-total, .cal-note { font-size:.9rem; }
   .app-header h1 { font-size:1.75rem; }
-  .hero-amount { font-size:2.4rem; }
+  .hero-amount { font-size:2.6rem; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition:none !important; animation:none !important; }
+}
 </style>
 """
 
@@ -117,7 +233,8 @@ def theme_show(fig, stretch):
         title=dict(font=dict(size=15), x=0, xanchor="left"),
         legend=dict(title_text="", orientation="h", y=-0.2, x=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
+        font=dict(family="Inter, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
+        hoverlabel=dict(font_size=12),
     )
     fig.update_xaxes(showgrid=False, linecolor="rgba(128,128,128,.3)")
     fig.update_yaxes(gridcolor="rgba(128,128,128,.15)", zeroline=False)
@@ -131,7 +248,7 @@ def money(n):
 def _delta(v, invert=False):
     good = (v <= 0) if invert else (v >= 0)
     sign = "+" if v > 0 else ("-" if v < 0 else "")
-    return f"<span class='{'pos' if good else 'neg'}'>{sign}{abs(v):,.0f}</span>"
+    return f"<span class='pill {'pos' if good else 'neg'}'>{sign}{abs(v):,.0f}</span>"
 
 
 def summary_card(month, income, expense, net, d_inc, d_exp, d_net):
@@ -152,7 +269,6 @@ def summary_card(month, income, expense, net, d_inc, d_exp, d_net):
 
 
 def budget_card(name, spent, limit):
-    import html
     ratio = spent / limit if limit > 0 else 0
     status = "over" if ratio >= 1 else ("warn" if ratio >= 0.8 else "ok")
     left = limit - spent
@@ -1363,7 +1479,7 @@ if sh and worksheet:
             for week in cal_matrix:
                 for day in week:
                     if day == 0:
-                        cells.append("<div class='cal-card' style='opacity:.2'></div>")
+                        cells.append("<div class='cal-card empty'></div>")
                         continue
                     date_str = f"{year}-{month:02d}-{day:02d}"
                     body, day_net, n_extra = "", 0, 0
@@ -1379,8 +1495,8 @@ if sh and worksheet:
                                 n_extra += 1
                                 continue
                             body += (
-                                f"<div style='margin-bottom:6px;'>"
-                                f"<span style='color:{color}; font-size:13px; font-weight:600;'>"
+                                f"<div class='cal-item'>"
+                                f"<span class='cal-amt' style='color:{color};'>"
                                 f"{sign}${amt:,.0f} ({html.escape(str(rec['分類']))})</span>"
                                 f"<span class='cal-note'>{html.escape(str(rec['備註']))}</span>"
                                 f"</div>"
