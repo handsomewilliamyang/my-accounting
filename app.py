@@ -25,11 +25,10 @@ CAT_COLORS = {
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap');
-
 :root {
   /* 色彩 */
   --primary:#6FA3D8; --primary-soft:rgba(111,163,216,.16);
+  --primary-strong:#33619B;                      /* 實心底色，白字對比 6.3:1 */
   --income:#3FAF86;  --income-soft:rgba(63,175,134,.14);
   --expense:#E0675F; --expense-soft:rgba(224,103,95,.14);
   --warning:#E0A030;
@@ -40,16 +39,16 @@ CSS = """
   --track:rgba(128,128,128,.22);
   /* 圓角 */
   --r-sm:10px; --r-md:14px; --r-lg:20px;
-  /* 陰影 */
-  --shadow-card:0 1px 2px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.10);
+  /* 陰影（深色模式陰影看不見，所以加一道頂部高光線來區分層次） */
+  --shadow-card:0 1px 2px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.05);
   --shadow-lift:0 6px 20px rgba(0,0,0,.22);
   --ease:cubic-bezier(.2,.7,.2,1);
 }
 
-/* ---------- 全域 ---------- */
+/* ---------- 全域（不載入外部字型：中文用系統字型，啟動更快） ---------- */
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-  font-family:"Inter","PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;
+  font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
   -webkit-font-smoothing:antialiased;
 }
 footer { display:none; }
@@ -57,7 +56,7 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
   max-width:1080px; padding:4.5rem 1rem 4rem;
 }
 .stApp h3 { font-size:1.125rem; font-weight:600; letter-spacing:.01em; margin-top:.5rem; }
-.stApp h4 { font-size:.8rem; font-weight:600; opacity:.6; letter-spacing:.08em; text-transform:uppercase; }
+.stApp h4 { font-size:.9rem; font-weight:600; opacity:.7; letter-spacing:.04em; }
 .stApp hr { border-color:var(--line) !important; margin:1.5rem 0; }
 .stApp [data-testid="stCaptionContainer"] { opacity:.65; }
 
@@ -70,23 +69,27 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 }
 .st-key-topbar div[data-testid="stColumn"], .st-key-month_nav div[data-testid="stColumn"] { min-width:0 !important; }
 
-/* ---------- 按鈕（觸控高度 44px） ---------- */
-.stButton > button, .stDownloadButton > button {
+/* ---------- 按鈕（觸控高度 44px；用「後代」選擇器，不依賴 Streamlit 內部層級） ---------- */
+.stButton button, .stDownloadButton button {
   min-height:44px; font-weight:500; border-radius:var(--r-md);
   border:1px solid var(--line);
   transition:transform .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease);
 }
-.stButton > button:hover, .stDownloadButton > button:hover {
+.stButton button:hover, .stDownloadButton button:hover {
   border-color:var(--primary); transform:translateY(-1px); box-shadow:var(--shadow-lift);
 }
-.stButton > button:active, .stDownloadButton > button:active { transform:translateY(0) scale(.98); box-shadow:none; }
-.stButton > button[kind="primary"] {
-  background:linear-gradient(135deg,#6FA3D8 0%,#4F86C6 100%);
-  border:none; color:#fff; font-weight:600;
-  box-shadow:0 2px 10px rgba(79,134,198,.35);
+.stButton button:active, .stDownloadButton button:active { transform:translateY(0) scale(.98); box-shadow:none; }
+/* 主要按鈕：深一點的藍，白字才讀得清楚（原本淺藍底白字只有 2.7:1） */
+.stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"] {
+  background:linear-gradient(135deg,#4177BA 0%,#33619B 100%) !important;
+  border:none !important; color:#fff !important; font-weight:600;
+  box-shadow:0 2px 10px rgba(51,97,155,.40);
 }
-.stButton > button[kind="primary"]:hover { filter:brightness(1.08); box-shadow:0 6px 18px rgba(79,134,198,.45); }
-.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
+.stButton button[kind="primary"] p, .stButton button[data-testid="stBaseButton-primary"] p { color:#fff !important; }
+.stButton button[kind="primary"]:hover, .stButton button[data-testid="stBaseButton-primary"]:hover {
+  filter:brightness(1.1); box-shadow:0 6px 18px rgba(51,97,155,.50);
+}
+.stButton button:focus-visible, .stDownloadButton button:focus-visible {
   outline:2px solid var(--primary); outline-offset:2px;
 }
 .st-key-btn_delete button { color:var(--expense) !important; border-color:var(--expense) !important; }
@@ -105,7 +108,7 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 .stApp label p { font-size:.85rem; font-weight:500; opacity:.8; }
 div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:var(--r-md) !important; }
 
-/* ---------- 分頁籤（記一筆 / 薪資 / 固定 / 預算） ---------- */
+/* ---------- 分頁籤 ---------- */
 .stTabs [data-baseweb="tab-list"] { gap:4px; border-bottom:1px solid var(--line); }
 .stTabs [data-baseweb="tab"] { height:44px; padding:0 14px; border-radius:var(--r-sm) var(--r-sm) 0 0; font-weight:500; }
 .stTabs [aria-selected="true"] { font-weight:600; }
@@ -117,7 +120,7 @@ div[data-testid="stMetric"] {
   padding:12px 14px; font-variant-numeric:tabular-nums;
 }
 div[data-testid="stMetricLabel"] p { font-size:.8rem; opacity:.65; }
-div[data-testid="stMetricValue"] { font-weight:600; }
+div[data-testid="stMetricValue"] { font-weight:600; font-variant-numeric:tabular-nums; }
 
 /* ---------- 提示框、進度條、表格 ---------- */
 div[data-testid="stAlert"] { border-radius:var(--r-md); border:1px solid var(--line); }
@@ -136,6 +139,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
   padding:20px 22px; margin:16px 0 12px; box-shadow:var(--shadow-card);
   font-variant-numeric:tabular-nums;
 }
+.hero-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .hero-label { opacity:.6; font-size:.8rem; letter-spacing:.04em; }
 .hero-amount { font-size:2.25rem; font-weight:700; line-height:1.15; margin:4px 0 8px; letter-spacing:-.01em; }
 .hero-delta { font-size:.8rem; }
@@ -147,6 +151,8 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-weight:600; font-size:.78rem; }
 .pill.pos { background:var(--income-soft); }
 .pill.neg { background:var(--expense-soft); }
+.pill.zero { background:var(--card); color:inherit; opacity:.7; }          /* 沒有變動時用中性色，不要誤導成「好」 */
+.pill.rate { opacity:1; font-weight:600; white-space:nowrap; }
 
 /* ---------- 預算卡 ---------- */
 .bud {
@@ -174,7 +180,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .cal-card {
   background:var(--card); border:1px solid var(--line); border-radius:var(--r-sm);
   padding:8px 10px; height:132px; overflow:hidden; margin-bottom:8px;
-  transition:background .15s var(--ease), transform .15s var(--ease);
+  transition:background .15s var(--ease);
 }
 .cal-grid .cal-card { margin-bottom:0; }
 .cal-card:hover { background:var(--card-hover); }
@@ -185,7 +191,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
   padding-bottom:4px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;
 }
 .cal-card.today .cal-day-header > span:first-child {
-  background:var(--primary); color:#fff; border-radius:999px; padding:0 7px; min-width:22px; text-align:center;
+  background:var(--primary-strong); color:#fff; border-radius:999px; padding:0 7px; min-width:22px; text-align:center;
 }
 .cal-day-total { font-size:.75rem; font-weight:600; font-variant-numeric:tabular-nums; }
 .cal-amt { font-size:.8rem; font-weight:600; font-variant-numeric:tabular-nums; }
@@ -233,7 +239,7 @@ def theme_show(fig, stretch):
         title=dict(font=dict(size=15), x=0, xanchor="left"),
         legend=dict(title_text="", orientation="h", y=-0.2, x=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
+        font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
         hoverlabel=dict(font_size=12),
     )
     fig.update_xaxes(showgrid=False, linecolor="rgba(128,128,128,.3)")
@@ -246,16 +252,22 @@ def money(n):
 
 
 def _delta(v, invert=False):
+    if round(v) == 0:
+        return "<span class='pill zero'>±0</span>"
     good = (v <= 0) if invert else (v >= 0)
-    sign = "+" if v > 0 else ("-" if v < 0 else "")
+    sign = "+" if v > 0 else "-"
     return f"<span class='pill {'pos' if good else 'neg'}'>{sign}{abs(v):,.0f}</span>"
 
 
-def summary_card(month, income, expense, net, d_inc, d_exp, d_net):
+def summary_card(month, income, expense, net, d_inc, d_exp, d_net, rate=None):
+    """rate = 儲蓄率（結餘 ÷ 收入）；沒有收入時傳 None 就不顯示"""
     cls = "pos" if net >= 0 else "neg"
+    rate_html = ""
+    if rate is not None:
+        rate_html = f"<span class='pill rate {'pos' if rate >= 0 else 'neg'}'>儲蓄率 {rate:.0%}</span>"
     st.markdown(
         f"<div class='hero'>"
-        f"<div class='hero-label'>{month} 本月結餘</div>"
+        f"<div class='hero-top'><div class='hero-label'>{month} 本月結餘</div>{rate_html}</div>"
         f"<div class='hero-amount {cls}'>{money(net)}</div>"
         f"<div class='hero-delta'><span class='mut'>較上月</span> {_delta(d_net)}</div>"
         f"<div class='hero-row'>"
@@ -364,7 +376,7 @@ TOTAL_KEY = "總預算"
 CACHE_TTL = 60  # 記帳資料的快取秒數（多裝置同步更快）
 CACHE_TTL_CFG = 600  # 設定類分頁很少改，快取久一點（儲存時會手動清除；其他裝置改的最多 10 分鐘後同步）
 
-# 檢視模式名稱（底部導覽列有 5 個項目，名稱要短）
+# 檢視模式名稱（導覽列有 5 個項目，名稱要短）
 MODE_ADD = "記帳"
 MODE_LIST = "明細"
 MODE_CHART = "圖表"
@@ -889,7 +901,7 @@ if sh and worksheet:
         .reset_index(drop=True)
     )
 
-    # ---------- 本月統計（總覽卡，含與上月比較） ----------
+    # ---------- 本月統計（總覽卡，含與上月比較與儲蓄率） ----------
     total_income, total_expense = sums(df_selected)
     prev_income, prev_expense = sums(df[df["年月"] == prev_month_str(selected_month)])
     net_balance = total_income - total_expense
@@ -898,10 +910,8 @@ if sh and worksheet:
     summary_card(
         selected_month, total_income, total_expense, net_balance,
         total_income - prev_income, total_expense - prev_expense, net_balance - prev_net,
+        rate=(net_balance / total_income if total_income > 0 else None),
     )
-
-    if total_income > 0:
-        st.caption(f"本月儲蓄率：{net_balance / total_income:.0%}（結餘 ÷ 收入）")
 
     render_budget_banner(df_selected, total_expense, budgets, selected_month)
     n_pend = len(pending_fixed(df, fixed_templates, TODAY))
@@ -925,7 +935,7 @@ if sh and worksheet:
 
     # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
-        tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算"])
+        tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算設定"])
 
         @st.fragment
         def add_entry_form():
@@ -1388,7 +1398,7 @@ if sh and worksheet:
     elif view_mode == MODE_BUDGET:
         st.subheader(f"{selected_month} 預算追蹤")
         if not budgets:
-            st.info(f"尚未設定預算，請到「{MODE_ADD}」→「預算」設定。")
+            st.info(f"尚未設定預算，請到「{MODE_ADD}」→「預算設定」設定。")
         else:
             exp_df = df_selected[df_selected["類型"] == "支出"]
             items = []
@@ -1437,7 +1447,7 @@ if sh and worksheet:
             else:
                 st.caption(f"還差 ${goal - all_net:,.0f}")
         else:
-            st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算」設定。")
+            st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算設定」設定。")
 
     # ---------- 月曆 ----------
     elif view_mode == MODE_CAL:
