@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import html
 import re
 import calendar as py_calendar
@@ -6,13 +8,9 @@ from datetime import date, datetime, timedelta, timezone
 import gspread
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ======================= 視覺主題 =======================
-# 設計方向：Stripe 式的「數字優先」金融儀表板 + Apple 式的柔和圓角與留白
-# 設計 token：
-#   間距 4 / 8 / 12 / 16 / 24   圓角 10 / 14 / 20   陰影 2 層（卡片、浮起）
-#   字級 12 / 13 / 15 / 18 / 24 / 36（數字一律 tabular-nums）
-
 ACCENT = "#6FA3D8"
 INCOME_COLOR = "#3FAF86"
 EXPENSE_COLOR = "#E0675F"
@@ -26,26 +24,21 @@ CAT_COLORS = {
 CSS = """
 <style>
 :root {
-  /* 色彩 */
   --primary:#6FA3D8; --primary-soft:rgba(111,163,216,.16);
-  --primary-strong:#33619B;                      /* 實心底色，白字對比 6.3:1 */
+  --primary-strong:#33619B;
   --income:#3FAF86;  --income-soft:rgba(63,175,134,.14);
   --expense:#E0675F; --expense-soft:rgba(224,103,95,.14);
   --warning:#E0A030;
-  /* 中性色（半透明，深淺色主題都適用） */
   --line:rgba(128,128,128,.22);
   --card:rgba(128,128,128,.08);
   --card-hover:rgba(128,128,128,.13);
   --track:rgba(128,128,128,.22);
-  /* 圓角 */
   --r-sm:10px; --r-md:14px; --r-lg:20px;
-  /* 陰影（深色模式陰影看不見，所以加一道頂部高光線來區分層次） */
   --shadow-card:0 1px 2px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.05);
   --shadow-lift:0 6px 20px rgba(0,0,0,.22);
   --ease:cubic-bezier(.2,.7,.2,1);
 }
 
-/* ---------- 全域（不載入外部字型：中文用系統字型，啟動更快） ---------- */
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
   font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -69,7 +62,7 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 }
 .st-key-topbar div[data-testid="stColumn"], .st-key-month_nav div[data-testid="stColumn"] { min-width:0 !important; }
 
-/* ---------- 按鈕（觸控高度 44px；用「後代」選擇器，不依賴 Streamlit 內部層級） ---------- */
+/* ---------- 按鈕 ---------- */
 .stButton button, .stDownloadButton button {
   min-height:44px; font-weight:500; border-radius:var(--r-md);
   border:1px solid var(--line);
@@ -79,7 +72,6 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
   border-color:var(--primary); transform:translateY(-1px); box-shadow:var(--shadow-lift);
 }
 .stButton button:active, .stDownloadButton button:active { transform:translateY(0) scale(.98); box-shadow:none; }
-/* 主要按鈕：深一點的藍，白字才讀得清楚（原本淺藍底白字只有 2.7:1） */
 .stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"] {
   background:linear-gradient(135deg,#4177BA 0%,#33619B 100%) !important;
   border:none !important; color:#fff !important; font-weight:600;
@@ -151,7 +143,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-weight:600; font-size:.78rem; }
 .pill.pos { background:var(--income-soft); }
 .pill.neg { background:var(--expense-soft); }
-.pill.zero { background:var(--card); color:inherit; opacity:.7; }          /* 沒有變動時用中性色，不要誤導成「好」 */
+.pill.zero { background:var(--card); color:inherit; opacity:.7; }
 .pill.rate { opacity:1; font-weight:600; white-space:nowrap; }
 
 /* ---------- 預算卡 ---------- */
@@ -171,7 +163,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .t-ok { color:var(--income); font-weight:600; } .t-warn { color:var(--warning); font-weight:600; } .t-over { color:var(--expense); font-weight:700; }
 @keyframes grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
 
-/* ---------- 主導覽（原生 segmented_control） ---------- */
+/* ---------- 主導覽 ---------- */
 .st-key-view_mode { margin:8px 0 20px; }
 .st-key-view_mode button { min-height:44px; font-weight:500; }
 
@@ -202,7 +194,6 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 /* ---------- 登入頁 ---------- */
 div[data-testid="stHeading"] h1 { text-align:center; font-weight:700; margin-top:8vh; }
 
-/* ---------- 手機版（≤ 640px）：卡片更緊湊、月曆格縮小 ---------- */
 @media (max-width:640px) {
   .hero { padding:16px; border-radius:var(--r-md); }
   .hero-amount { font-size:1.9rem; }
@@ -212,7 +203,6 @@ div[data-testid="stHeading"] h1 { text-align:center; font-weight:700; margin-top
   .cal-amt, .cal-day-total, .cal-note { font-size:.65rem; }
 }
 
-/* ---------- 電腦版 ---------- */
 @media (min-width:900px) {
   html { font-size:18px; }
   div.block-container, div[data-testid="stMainBlockContainer"] { max-width:1180px; padding:4.5rem 1.5rem 4rem; }
@@ -233,7 +223,6 @@ def inject_css():
 
 
 def theme_show(fig, stretch):
-    """統一圖表：透明底、淡格線、圖例置底"""
     fig.update_layout(
         margin=dict(l=8, r=8, t=48, b=8),
         title=dict(font=dict(size=15), x=0, xanchor="left"),
@@ -260,7 +249,6 @@ def _delta(v, invert=False):
 
 
 def summary_card(month, income, expense, net, d_inc, d_exp, d_net, rate=None):
-    """rate = 儲蓄率（結餘 ÷ 收入）；沒有收入時傳 None 就不顯示"""
     cls = "pos" if net >= 0 else "neg"
     rate_html = ""
     if rate is not None:
@@ -288,61 +276,25 @@ def budget_card(name, spent, limit):
     st.markdown(
         f"<div class='bud'>"
         f"<div class='bud-top'><b>{html.escape(str(name))}</b><span class='t-{status}'>{ratio:.0%}</span></div>"
-        f"<div class='bud-sub'>${spent:,.0f} / ${limit:,.0f}　{left_txt}</div>"
+        f"<div class='bud-sub'>${spent:,.0f} / ${limit:,.0f} {left_txt}</div>"
         f"<div class='bud-bar bud-{status}'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
 
-
 # ======================= 基本設定 =======================
 st.set_page_config(page_title="我是有錢人", page_icon="💰", layout="wide")
 
 
-def force_dark_theme():
-    """備援：config.toml 沒生效時，由程式直接設定深色主題，並重跑一次讓瀏覽器套用"""
-    try:
-        current = st.context.theme.type
-    except Exception:
-        current = None
-    if current == "dark" or st.session_state.get("_dark_tried"):
-        return
-    st.session_state["_dark_tried"] = True
-    try:
-        from streamlit import config as _cfg
-        for key, val in {
-            "theme.base": "dark",
-            "theme.primaryColor": "#6FA3D8",
-            "theme.backgroundColor": "#0F1419",
-            "theme.secondaryBackgroundColor": "#171D25",
-            "theme.textColor": "#E8ECF0",
-            "theme.borderColor": "#2A323C",
-        }.items():
-            try:
-                _cfg.set_option(key, val)
-            except Exception:
-                pass
-    except Exception:
-        return
-    st.rerun()
-
-
-force_dark_theme()
-
-
 def get_secret(name, default=""):
-    """讀取 Secrets（不分大小寫：SPREADSHEET_URL / spreadsheet_url 都可以）"""
     for k in (name, name.lower(), name.upper()):
         if k in st.secrets:
             return st.secrets[k]
     return default
 
 
-# 試算表網址：只從 Streamlit Secrets 讀取，不把網址寫在程式碼裡
 SPREADSHEET_URL = str(get_secret("SPREADSHEET_URL", "")).strip()
-
-# 台灣時區（伺服器通常是 UTC，凌晨記帳時 date.today() 會差一天）
 TW_TZ = timezone(timedelta(hours=8))
 
 
@@ -353,15 +305,12 @@ def today():
 TODAY = today()
 
 
-
 def load_px():
-    """plotly 只在「圖表」頁才匯入，加快啟動並省記憶體"""
     import plotly.express as px_
     px_.defaults.color_discrete_sequence = PALETTE
     return px_
 
 
-# 統一的選項清單（支出/收入分類之後會被「分類設定」分頁覆蓋）
 PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
 EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "每月固定費用", "其他支出"]
 INCOME_CATS = ["薪資", "其他收入"]
@@ -373,10 +322,9 @@ CFG_SALARY = "預設月薪"
 CFG_GOAL = "儲蓄目標"
 WEEKDAY_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
 TOTAL_KEY = "總預算"
-CACHE_TTL = 60  # 記帳資料的快取秒數（多裝置同步更快）
-CACHE_TTL_CFG = 600  # 設定類分頁很少改，快取久一點（儲存時會手動清除；其他裝置改的最多 10 分鐘後同步）
+CACHE_TTL = 60
+CACHE_TTL_CFG = 600
 
-# 檢視模式名稱（導覽列有 5 個項目，名稱要短）
 MODE_ADD = "記帳"
 MODE_LIST = "明細"
 MODE_CHART = "圖表"
@@ -392,15 +340,11 @@ def _ver_tuple():
     return tuple(parts)
 
 
-# 新版 Streamlit 用 width="stretch"，舊版用 use_container_width
 STRETCH = {"width": "stretch"} if _ver_tuple() >= (1, 50) else {"use_container_width": True}
-
-# 樣式：見上方「視覺主題」區塊
 inject_css()
 
 
 def show(fig):
-    """統一的圖表呈現"""
     theme_show(fig, STRETCH)
 
 
@@ -410,58 +354,67 @@ HEADER_HTML = (
 )
 
 
-# ======================= Google 帳號登入 =======================
-# 使用 Streamlit 內建的 st.login()（需要 Streamlit 1.42 以上 + Authlib）。
-# 登入狀態由 Streamlit 伺服器簽章後寫入 cookie（約 30 天），同一個瀏覽器不用再重新登入。
-# 只有 Secrets 裡 ALLOWED_EMAILS 名單內的 Google 帳號才能使用，其他人即使登入 Google 也進不來。
+# ======================= 安全登入驗證（取代會觸發 Internal server error 的 st.login） =======================
+def _auth_token(pwd: str) -> str:
+    salt = str(get_secret("SPREADSHEET_URL", "rich_app_salt"))
+    return hmac.new(salt.encode("utf-8"), pwd.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
-def parse_allowed(v):
-    """ALLOWED_EMAILS 可以寫成清單，或用逗號 / 換行分隔的字串"""
-    if isinstance(v, str):
-        items = v.replace("\n", ",").split(",")
-    else:
-        try:
-            items = list(v)
-        except TypeError:
-            items = []
-    return {str(x).strip().lower() for x in items if str(x).strip()}
+def _set_auth_cookie(token: str, days: int = 30):
+    max_age = days * 86400 if days > 0 else 0
+    components.html(
+        f"<script>document.cookie = 'rich_auth={token}; path=/; max-age={max_age}; SameSite=Lax';</script>",
+        height=0,
+    )
+
+
+def logout_user():
+    st.session_state["authenticated"] = False
+    st.session_state["_clear_cookie"] = True
 
 
 def require_login():
-    if not hasattr(st, "login"):
-        st.error("目前的 Streamlit 版本太舊，Google 登入需要 1.42 以上。請把 requirements.txt 改成 streamlit>=1.42 並加上 Authlib>=1.3.2。")
+    app_pwd = str(get_secret("APP_PASSWORD", "")).strip()
+    if not app_pwd:
+        st.error("尚未設定登入密碼！請到 Streamlit Secrets 加入：APP_PASSWORD = \"你的密碼\"")
         st.stop()
 
-    if "auth" not in st.secrets:
-        st.error("尚未設定 Google 登入。請到 Streamlit Secrets 加入 [auth] 區塊（redirect_uri、cookie_secret、client_id、client_secret、server_metadata_url）。")
-        st.stop()
+    expected_token = _auth_token(app_pwd)
 
-    allowed = parse_allowed(get_secret("ALLOWED_EMAILS", ""))
-    if not allowed:
-        st.error("尚未設定 ALLOWED_EMAILS，為了安全程式已停止。請到 Streamlit Secrets 加入：ALLOWED_EMAILS = [\"你的信箱@gmail.com\"]")
-        st.stop()
+    if st.session_state.pop("_clear_cookie", False):
+        _set_auth_cookie("", days=0)
 
-    if not st.user.is_logged_in:
-        st.title("我是有錢人")
-        st.caption("請使用 Google 帳號登入")
-        _, mid, _ = st.columns([1, 1, 1])
-        mid.button("使用 Google 帳號登入", type="primary", on_click=st.login, **STRETCH)
-        st.stop()
+    # 檢查 session_state 或瀏覽器 Cookie
+    cookie_token = ""
+    try:
+        cookie_token = st.context.cookies.get("rich_auth", "")
+    except Exception:
+        pass
 
-    email = str(st.user.get("email", "") or "").strip().lower()
-    verified = st.user.get("email_verified", True)
-    if email not in allowed or verified is False:
-        st.title("我是有錢人")
-        st.error(f"此帳號（{email or '未知'}）沒有使用權限。")
-        _, mid, _ = st.columns([1, 1, 1])
-        mid.button("改用其他帳號登入", on_click=st.logout, **STRETCH)
-        st.stop()
+    if st.session_state.get("authenticated") or hmac.compare_digest(cookie_token, expected_token):
+        st.session_state["authenticated"] = True
+        return
+
+    st.title("我是有錢人")
+    _, mid, _ = st.columns([1, 1.4, 1])
+    with mid:
+        with st.form("login_form"):
+            pwd_input = st.text_input("請輸入登入密碼", type="password", placeholder="輸入密碼後按 Enter")
+            remember = st.checkbox("記住我 30 天", value=True)
+            submitted = st.form_submit_button("登入", type="primary", **STRETCH)
+            if submitted:
+                if hmac.compare_digest(pwd_input.strip(), app_pwd):
+                    st.session_state["authenticated"] = True
+                    if remember:
+                        _set_auth_cookie(expected_token, days=30)
+                    st.rerun()
+                else:
+                    st.error("密碼錯誤，請重新輸入。")
+    st.stop()
 
 
 require_login()
 
-# 操作成功訊息（rerun 後仍能顯示）
 if "flash" in st.session_state:
     st.toast(st.session_state.pop("flash"), icon=":material/check_circle:")
 if "editor_ver" not in st.session_state:
@@ -474,7 +427,6 @@ def pad_row(row, n=6):
 
 
 def to_number(v):
-    """能轉成數字就轉成數字（寫入試算表時金額才會是數字而非文字）"""
     s = str(v).strip().replace(",", "")
     try:
         f = float(s)
@@ -489,7 +441,6 @@ def flash_and_rerun(msg):
 
 
 def safe_load(fn, arg, default, label):
-    """讀取失敗時顯示錯誤並回傳預設值（失敗的結果不會被快取，下次操作會自動重試）"""
     try:
         return fn(arg)
     except Exception as e:
@@ -503,12 +454,10 @@ def prev_month_str(ym):
 
 
 def md_escape(s):
-    # 跳脫備註等使用者輸入的文字，避免被當成 Markdown 語法（含 $ 公式）
     return re.sub(r"([\\`*_{}\[\]()#+\-!|~$<>])", r"\\\1", str(s))
 
 
 def sums(d):
-    """回傳 (總收入, 總支出)；空表也安全"""
     return (
         d.loc[d["類型"] == "收入", "金額_num"].sum(),
         d.loc[d["類型"] == "支出", "金額_num"].sum(),
@@ -518,7 +467,6 @@ def sums(d):
 # ======================= 連線 Google 試算表 =======================
 @st.cache_resource
 def get_google_sheet():
-    # 失敗時直接丟出例外，cache_resource 不會把失敗結果存起來，下次會自動重試
     if not SPREADSHEET_URL:
         raise ValueError("尚未設定 SPREADSHEET_URL，請到 Streamlit Secrets 加入：SPREADSHEET_URL = \"你的試算表網址\"")
     info = dict(st.secrets["gcp_service_account"])
@@ -537,13 +485,12 @@ except Exception as e:
 
 @st.cache_resource
 def get_sheet_map(_sh):
-    # 只打 1 次 API 就取回所有分頁（原本每個分頁各查一次）
     return {w.title: w for w in _sh.worksheets()}
 
 
 @st.cache_resource
 def get_main_ws(_sh):
-    return next(iter(get_sheet_map(_sh).values()))  # 第一個分頁 = 記帳主表
+    return next(iter(get_sheet_map(_sh).values()))
 
 
 worksheet = get_main_ws(sh) if sh else None
@@ -565,7 +512,6 @@ def get_ws(title, rows, cols, init_rows):
         return None
 
 
-# 先確保各分頁都存在（找不到會自動建立）
 settings_ws = get_ws(
     "固定支出設定", 100, 4,
     [SETTINGS_HEADER, ["孝親費", "5000", "現金", "5"], ["電信費", "599", "信用卡", "10"]],
@@ -582,11 +528,10 @@ CFG_SHEETS = (("固定支出設定", 4), ("預算設定", 2), ("分類設定", 2
 
 @st.cache_data(ttl=CACHE_TTL_CFG)
 def fetch_config_bundle(_sh):
-    # 一次 API 呼叫讀完 4 個設定分頁（原本要 4 次）。失敗時丟出例外，不會被快取；寫入後記得 fetch_config_bundle.clear()
     ranges = [f"'{t}'!A:Z" for t, _ in CFG_SHEETS]
     try:
         value_ranges = [vr.get("values", []) for vr in _sh.values_batch_get(ranges).get("valueRanges", [])]
-    except AttributeError:  # 舊版 gspread 沒有這個方法時，退回逐頁讀取
+    except AttributeError:
         value_ranges = [_sh.worksheet(t).get_all_values() for t, _ in CFG_SHEETS]
     out = {}
     for (title, n), values in zip(CFG_SHEETS, value_ranges):
@@ -599,7 +544,6 @@ _cfg_loaded = {}
 
 
 def load_rows(ws, label):
-    # 設定類分頁共用同一份快取資料；第一次呼叫時才實際讀取
     if not ws:
         return []
     if "data" not in _cfg_loaded:
@@ -608,7 +552,6 @@ def load_rows(ws, label):
 
 
 def parse_day(v):
-    # 扣款日：1–31 的整數，其他（含空白）一律視為「未設定」
     try:
         d = int(float(str(v).strip()))
         return d if 1 <= d <= 31 else None
@@ -652,7 +595,7 @@ budget_rows = load_rows(budget_ws, "預算設定")
 budgets = build_budgets(budget_rows)
 
 
-# ======================= 分類設定（從試算表讀取） =======================
+# ======================= 分類設定 =======================
 _cat_rows = load_rows(cat_ws, "分類設定")
 _exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
 _inc = [c.strip() for t, c in _cat_rows if t.strip() == "收入" and c.strip()]
@@ -660,14 +603,13 @@ if _exp:
     EXPENSE_CATS = _exp
 if _inc:
     INCOME_CATS = _inc
-# 程式邏輯依賴這兩個分類，缺少時自動補上
 if "每月固定費用" not in EXPENSE_CATS:
     EXPENSE_CATS.append("每月固定費用")
 if "薪資" not in INCOME_CATS:
     INCOME_CATS.append("薪資")
 
 
-# ======================= 系統設定（預設月薪、儲蓄目標） =======================
+# ======================= 系統設定 =======================
 config_rows = load_rows(config_ws, "系統設定")
 config = {str(r[0]).strip(): r[1] for r in config_rows}
 
@@ -693,7 +635,7 @@ def render_budget_banner(df_month, total_spent, budgets, month_label):
     if limit:
         ratio = total_spent / limit
         if ratio >= 1:
-            st.error(f"已超出總預算 ${total_spent - limit:,.0f}！（${total_spent:,.0f} / ${limit:,.0f}）")
+            st.error(f"已超出總預算 ${total_spent - limit:,.0f}！（${total_spent:,.0f} /${limit:,.0f}）")
         elif ratio >= 0.8:
             st.warning(f"總預算已使用 {ratio:.0%}，本月只剩 ${limit - total_spent:,.0f}。")
 
@@ -704,7 +646,7 @@ def render_budget_banner(df_month, total_spent, budgets, month_label):
             continue
         spent = exp.loc[exp["分類"] == cat, "金額_num"].sum()
         if spent >= lim:
-            over.append(f"{cat}（${spent:,.0f} / ${lim:,.0f}）")
+            over.append(f"{cat}（${spent:,.0f} /${lim:,.0f}）")
     if over:
         st.error("以下分類已超出預算：" + "、".join(over))
 
@@ -715,7 +657,6 @@ DF_COLS = ["_row"] + FIELDS + ["年月", "日期_std", "金額_num"]
 
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_data(_sh):
-    """讀取記帳主表。讀取失敗時直接丟出例外（失敗結果不會被快取）。"""
     if not _sh:
         return pd.DataFrame(columns=DF_COLS)
     ws = get_main_ws(_sh)
@@ -727,8 +668,8 @@ def fetch_data(_sh):
     for r_idx, row in enumerate(raw_data[1:]):
         p = pad_row(row)
         if not any(str(c).strip() for c in p):
-            continue  # 空白列略過（但列號仍照實際位置計算）
-        rec = {"_row": r_idx + 2}  # 試算表實際列號（標題為第 1 列）
+            continue
+        rec = {"_row": r_idx + 2}
         for name, val in zip(FIELDS, p):
             rec[name] = str(val).strip()
         rows.append(rec)
@@ -752,7 +693,6 @@ def fetch_data(_sh):
 
 
 def bump_editor():
-    """讓所有 data_editor 換一個新的 key，清掉舊的編輯狀態（避免儲存後重複新增或顯示錯亂）"""
     st.session_state.editor_ver += 1
 
 
@@ -762,7 +702,6 @@ def clear_data_cache():
 
 
 def rows_still_match(ws, df_rows):
-    """寫入前確認雲端那幾列仍和畫面上一致（只讀取需要的列，速度較快）"""
     ranges = [f"A{int(n)}:F{int(n)}" for n in df_rows["_row"]]
     got = ws.batch_get(ranges)
     for (_, r), vals in zip(df_rows.iterrows(), got):
@@ -774,7 +713,6 @@ def rows_still_match(ws, df_rows):
 
 
 def delete_rows(ws, row_nos):
-    """依列號刪除（由下往上，一次 API 呼叫完成）"""
     nos = sorted({int(x) for x in row_nos}, reverse=True)
     requests = [{
         "deleteDimension": {
@@ -791,7 +729,6 @@ def delete_rows(ws, row_nos):
 
 
 def already_recorded(df_all, ym, cat, note=None):
-    # 該月份是否已有這個分類（以及相同備註）的紀錄
     m = (df_all["年月"] == ym) & (df_all["分類"] == cat)
     if note is not None:
         m &= df_all["備註"] == note.strip()
@@ -799,7 +736,6 @@ def already_recorded(df_all, ym, cat, note=None):
 
 
 def pending_fixed(df_all, templates, ref_date):
-    # 本月已到扣款日、但還沒記錄的固定支出（以「備註 = 項目名稱」判斷是否已記錄）
     ym = ref_date.strftime("%Y-%m")
     last = py_calendar.monthrange(ref_date.year, ref_date.month)[1]
     sub = df_all[(df_all["年月"] == ym) & (df_all["分類"] == "每月固定費用")]
@@ -809,14 +745,13 @@ def pending_fixed(df_all, templates, ref_date):
         d = t.get("day")
         if not d or t["amount"] <= 0:
             continue
-        due = min(d, last)  # 例如設 31 號，2 月就算 28/29 號
+        due = min(d, last)
         if due <= ref_date.day and name not in done:
             out.append((name, t, date(ref_date.year, ref_date.month, due)))
     return out
 
 
 def validate_row(r):
-    """檢查單列資料。回傳 (錯誤清單, 整理後可寫入的一列資料)"""
     errs = []
 
     d = str(r["日期"]).strip().replace("/", "-")
@@ -853,7 +788,6 @@ if sh and worksheet:
     df = safe_load(fetch_data, sh, pd.DataFrame(columns=DF_COLS), "記帳資料")
     ver = st.session_state.editor_ver
 
-    # ---------- 頂部：標題 + 小圖示按鈕 ----------
     with st.container(key="topbar"):
         h1, h2, h3 = st.columns([8, 1.2, 1.2])
         h1.markdown(HEADER_HTML, unsafe_allow_html=True)
@@ -862,9 +796,10 @@ if sh and worksheet:
             fetch_config_bundle.clear()
             bump_editor()
             st.rerun()
-        h3.button("", icon=":material/logout:", help="登出", key="btn_logout", on_click=st.logout, **STRETCH)
+        if h3.button("", icon=":material/logout:", help="登出", key="btn_logout", **STRETCH):
+            logout_user()
+            st.rerun()
 
-    # 日期格式異常提示（避免資料悄悄從月份篩選中消失）
     if not df.empty:
         bad_rows = df[~df["年月"].fillna("").str.fullmatch(r"\d{4}-\d{2}")]
         if not bad_rows.empty:
@@ -873,10 +808,9 @@ if sh and worksheet:
                 f"（試算表第 {', '.join(map(str, bad_rows['_row']))} 列），不會出現在月份篩選中。"
             )
 
-    # ---------- 月份篩選（含上月／下月按鈕） ----------
     current_month_str = TODAY.strftime("%Y-%m")
     db_months = [m for m in df["年月"].dropna().unique().tolist() if re.fullmatch(r"\d{4}-\d{2}", str(m))]
-    all_months = sorted(set(db_months + [current_month_str]), reverse=True)  # 新到舊
+    all_months = sorted(set(db_months + [current_month_str]), reverse=True)
 
     if st.session_state.get("month_sel") not in all_months:
         st.session_state.month_sel = current_month_str
@@ -897,11 +831,10 @@ if sh and worksheet:
 
     df_selected = (
         df[df["年月"] == selected_month]
-        .sort_values(["日期_std", "_row"], ascending=False)  # 預設新到舊
+        .sort_values(["日期_std", "_row"], ascending=False)
         .reset_index(drop=True)
     )
 
-    # ---------- 本月統計（總覽卡，含與上月比較與儲蓄率） ----------
     total_income, total_expense = sums(df_selected)
     prev_income, prev_expense = sums(df[df["年月"] == prev_month_str(selected_month)])
     net_balance = total_income - total_expense
@@ -918,10 +851,8 @@ if sh and worksheet:
     if n_pend:
         st.info(f"有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「{MODE_ADD}」→「固定」補登。")
 
-    # ---------- 主導覽列 ----------
     MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL]
     if st.session_state.get("view_mode") not in MODES:
-        # 舊連線停在已移除的頁面、或使用者再點一次取消選取時，退回上一頁
         st.session_state.view_mode = st.session_state.get("_last_mode", MODE_ADD)
     view_mode = st.segmented_control(
         "選擇檢視模式",
@@ -933,7 +864,6 @@ if sh and worksheet:
     view_mode = view_mode or MODE_ADD
     st.session_state["_last_mode"] = view_mode
 
-    # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
         tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算設定"])
 
@@ -945,7 +875,7 @@ if sh and worksheet:
             tx_type = st.radio("類型", ["支出", "收入"], horizontal=True, key="gen_type")
             cat_options = EXPENSE_CATS if tx_type == "支出" else INCOME_CATS
             if st.session_state.get("gen_cat") not in cat_options:
-                st.session_state.pop("gen_cat", None)  # 切換支出/收入後，舊分類不適用
+                st.session_state.pop("gen_cat", None)
             category = st.selectbox("分類", cat_options, key="gen_cat")
             amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
             pay_method = st.selectbox("付款方式", PAY_OPTIONS, key="gen_pay")
@@ -997,7 +927,6 @@ if sh and worksheet:
                         st.error(f"儲存失敗: {e}")
                 salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
 
-                # 重複入帳提醒：該月份已有「薪資」紀錄時，需勾選確認才能再記一次
                 salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
                 allow_salary_dup = True
                 if salary_dup:
@@ -1019,11 +948,10 @@ if sh and worksheet:
                             st.error(f"薪資入帳失敗: {e}")
 
         with tab_fixed:
-            # 到期未記錄的固定支出（需先在下方清單設定「扣款日」）
             pend = pending_fixed(df, fixed_templates, TODAY)
             if pend:
                 lines = "\n".join(
-                    f"- {n}　${t['amount']:,.0f}（{d.strftime('%m/%d')}）" for n, t, d in pend
+                    f"- {n} ${t['amount']:,.0f}（{d.strftime('%m/%d')}）" for n, t, d in pend
                 )
                 st.info("本月已到期、尚未記錄的固定支出：\n" + lines)
                 if st.button(f"一鍵補登 {len(pend)} 筆", type="primary", **STRETCH):
@@ -1055,7 +983,6 @@ if sh and worksheet:
                 expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
                 expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
 
-                # 重複扣款提醒：同月份已有同名的固定支出時，需勾選確認才能再記一次
                 fixed_dup = already_recorded(df, expense_date.strftime("%Y-%m"), "每月固定費用", expense_note)
                 allow_fixed_dup = True
                 if fixed_dup:
@@ -1078,7 +1005,6 @@ if sh and worksheet:
                             except Exception as e:
                                 st.error(f"支出記錄失敗: {e}")
 
-                # 本月固定支出全部入帳（自動略過本月已記過的項目）
                 with fx2:
                     if fixed_templates and st.button("本月全部入帳", **STRETCH):
                         ym = expense_date.strftime("%Y-%m")
@@ -1117,7 +1043,6 @@ if sh and worksheet:
                             clean_df = clean_df[clean_df["項目名稱"].str.strip() != ""]
                             new_data = [SETTINGS_HEADER] + clean_df.values.tolist()
                             old_len = len(settings_ws.get_all_values())
-                            # 先寫入新內容，再清掉多出來的舊列（避免先 clear 後寫入失敗而全部遺失）
                             settings_ws.update(range_name="A1", values=new_data)
                             if old_len > len(new_data):
                                 settings_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
@@ -1179,19 +1104,17 @@ if sh and worksheet:
                     except Exception as e:
                         st.error(f"儲存失敗: {e}")
 
-    # ---------- 記帳明細 ----------
     elif view_mode == MODE_LIST:
         st.subheader(f"{selected_month} 記帳明細")
         if not df_selected.empty:
             st.download_button(
                 "匯出本月 CSV",
-                df_selected[FIELDS].to_csv(index=False).encode("utf-8-sig"),  # utf-8-sig 讓 Excel 開啟不亂碼
+                df_selected[FIELDS].to_csv(index=False).encode("utf-8-sig"),
                 file_name=f"記帳_{selected_month}.csv",
                 mime="text/csv",
                 icon=":material/download:",
             )
 
-            # 搜尋與篩選（篩選後仍保留原本的 index，刪除與儲存邏輯不受影響）
             f1, f2, f3 = st.columns([2, 2, 3])
             cat_filter = f1.multiselect("分類", EXPENSE_CATS + INCOME_CATS)
             pay_filter = f2.multiselect("付款方式", PAY_OPTIONS)
@@ -1210,7 +1133,6 @@ if sh and worksheet:
             v1.metric("筆數", f"{len(view)}")
             v2.metric("收入", f"${view.loc[view['類型'] == '收入', '金額_num'].sum():,.0f}")
             v3.metric("支出", f"${view.loc[view['類型'] == '支出', '金額_num'].sum():,.0f}")
-            # 篩選條件改變時重置編輯狀態，避免修改套錯列
             filter_sig = abs(hash((tuple(cat_filter), tuple(pay_filter), kw.strip())))
 
             df_display = view[FIELDS].copy()
@@ -1236,7 +1158,6 @@ if sh and worksheet:
 
             col1, col2 = st.columns(2)
 
-            # 刪除：依列號從主表直接刪除（一次 API 呼叫完成）
             with col1:
                 if st.button("刪除所選項目", key="btn_delete", icon=":material/delete:", **STRETCH):
                     checked = edited_df[edited_df["刪除"] == True].index.tolist()  # noqa: E712
@@ -1255,7 +1176,6 @@ if sh and worksheet:
                         except Exception as e:
                             st.error(f"刪除失敗：{e}")
 
-            # 儲存：只更新「有被修改的列」，不動其他月份、不改變順序（儲存前會先檢查格式）
             with col2:
                 if st.button("儲存修改內容", type="primary", icon=":material/check:", **STRETCH):
                     try:
@@ -1268,7 +1188,6 @@ if sh and worksheet:
                         if not changed_idx:
                             st.info("沒有偵測到任何修改。")
                         else:
-                            # 1) 格式檢查：有任何問題就整批不儲存，並指出是哪一列
                             error_lines = []
                             cleaned = {}
                             for i in changed_idx:
@@ -1306,10 +1225,8 @@ if sh and worksheet:
             icon=":material/download:",
         )
 
-    # ---------- 圖表分析 ----------
     elif view_mode == MODE_CHART:
         px = load_px()
-        # 近 12 個月收支趨勢
         if not df.empty:
             valid = df[df["年月"].str.fullmatch(r"\d{4}-\d{2}", na=False)]
             if not valid.empty:
@@ -1372,158 +1289,4 @@ if sh and worksheet:
                     labels={"金額_num": "金額"},
                 ))
 
-                # 每週各天支出合計（看出哪一天最容易花錢）
-                tmp = df_expense.copy()
-                tmp["週"] = pd.to_datetime(tmp["日期_std"], errors="coerce").dt.dayofweek
-                tmp = tmp.dropna(subset=["週"])
-                tmp["週"] = tmp["週"].astype(int)
-                wk = tmp.groupby("週")["金額_num"].sum().reindex(range(7), fill_value=0).reset_index()
-                wk["星期"] = [WEEKDAY_NAMES[int(i)] for i in wk["週"]]
-                show(px.bar(
-                    wk, x="星期", y="金額_num", text_auto=True,
-                    title=f"{selected_month} 每週各天支出合計",
-                    labels={"金額_num": "金額"},
-                ))
-            else:
-                st.info("此月份尚無支出紀錄可產出圖表。")
-
-            df_income = df_selected[df_selected["類型"] == "收入"]
-            if not df_income.empty:
-                show(px.pie(
-                    df_income, values="金額_num", names="分類",
-                    title=f"{selected_month} 收入來源佔比", hole=0.45,
-                ))
-
-    # ---------- 預算追蹤 ----------
-    elif view_mode == MODE_BUDGET:
-        st.subheader(f"{selected_month} 預算追蹤")
-        if not budgets:
-            st.info(f"尚未設定預算，請到「{MODE_ADD}」→「預算設定」設定。")
-        else:
-            exp_df = df_selected[df_selected["類型"] == "支出"]
-            items = []
-            if TOTAL_KEY in budgets:
-                items.append((TOTAL_KEY, total_expense))
-            for cat in budgets:
-                if cat != TOTAL_KEY:
-                    items.append((cat, exp_df.loc[exp_df["分類"] == cat, "金額_num"].sum()))
-
-            for name, spent in items:
-                budget_card(name, spent, budgets[name])
-
-            if selected_month == current_month_str and TOTAL_KEY in budgets:
-                y, m = map(int, selected_month.split("-"))
-                days_total = py_calendar.monthrange(y, m)[1]
-                days_left = days_total - TODAY.day + 1
-                remain = budgets[TOTAL_KEY] - total_expense
-                if remain > 0:
-                    st.info(f"本月還有 {days_left} 天（含今天），平均每天可花 ${remain / days_left:,.0f}")
-                else:
-                    st.warning("本月總預算已用完，建議接下來盡量不要再花錢。")
-
-                # 月底超支預測
-                projected = total_expense / TODAY.day * days_total
-                if projected > budgets[TOTAL_KEY]:
-                    st.warning(
-                        f"照目前速度，月底預估花費 ${projected:,.0f}，"
-                        f"會超出預算 ${projected - budgets[TOTAL_KEY]:,.0f}。"
-                    )
-                else:
-                    st.success(f"月底預估花費 ${projected:,.0f}，仍在預算內。")
-
-        # 儲蓄目標（累計結餘 = 所有月份的收入 − 支出）
-        st.markdown("#### 儲蓄目標")
-        goal = cfg_num(CFG_GOAL, 0)
-        all_inc, all_exp = sums(df)
-        all_net = all_inc - all_exp
-        if goal and goal > 0:
-            g_ratio = all_net / goal
-            st.progress(
-                float(min(max(g_ratio, 0.0), 1.0)),
-                text=f"{max(g_ratio, 0):.0%}（累計結餘 ${all_net:,.0f} / 目標 ${goal:,.0f}）",
-            )
-            if all_net >= goal:
-                st.success("已達成儲蓄目標！")
-            else:
-                st.caption(f"還差 ${goal - all_net:,.0f}")
-        else:
-            st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算設定」設定。")
-
-    # ---------- 月曆 ----------
-    elif view_mode == MODE_CAL:
-        st.subheader(f"{selected_month} 日曆視圖")
-
-        try:
-            year, month = map(int, selected_month.split("-"))
-        except ValueError:
-            year, month = TODAY.year, TODAY.month
-
-        # 手機為主：預設用清單
-        cal_style = st.radio("顯示方式", ["格狀月曆", "清單（手機建議）"], horizontal=True, index=1)
-
-        if cal_style == "清單（手機建議）":
-            if df_selected.empty:
-                st.info("此月份尚無資料。")
-            else:
-                for d_str, g in df_selected.sort_values(["日期_std", "_row"]).groupby("日期_std"):
-                    g_inc, g_exp = sums(g)
-                    net_txt = md_escape(f"{g_inc - g_exp:+,.0f}")
-                    ts = pd.to_datetime(d_str, errors="coerce")
-                    wd = WEEKDAY_NAMES[int(ts.dayofweek)] if not pd.isna(ts) else ""
-                    st.markdown(md_escape(f"{d_str}（{wd}）") + f"　**淨 {net_txt}**")
-                    for _, row in g.iterrows():
-                        sign = "-" if row["類型"] == "支出" else "+"
-                        amt_txt = md_escape(f"{sign}${row['金額_num']:,.0f}")
-                        st.markdown(
-                            f"- {amt_txt}　{md_escape(row['分類'])}　{md_escape(row['備註'])}"
-                        )
-        else:
-            # firstweekday=6 → 週日為每週第一天，與標題列一致
-            cal_matrix = py_calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
-
-            weekdays = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
-            by_day = {d: g for d, g in df_selected.groupby("日期_std")} if not df_selected.empty else {}
-            today_str = TODAY.strftime("%Y-%m-%d")
-
-            cells = ["".join(f"<div class='cal-wd'>{w}</div>" for w in weekdays)]
-            for week in cal_matrix:
-                for day in week:
-                    if day == 0:
-                        cells.append("<div class='cal-card empty'></div>")
-                        continue
-                    date_str = f"{year}-{month:02d}-{day:02d}"
-                    body, day_net, n_extra = "", 0, 0
-                    g = by_day.get(date_str)
-                    if g is not None:
-                        for k, rec in enumerate(g[["類型", "分類", "備註", "金額_num"]].to_dict("records")):
-                            is_exp = rec["類型"] == "支出"
-                            color = EXPENSE_COLOR if is_exp else INCOME_COLOR
-                            sign = "-" if is_exp else "+"
-                            amt = rec["金額_num"]
-                            day_net += -amt if is_exp else amt
-                            if k >= 3:
-                                n_extra += 1
-                                continue
-                            body += (
-                                f"<div class='cal-item'>"
-                                f"<span class='cal-amt' style='color:{color};'>"
-                                f"{sign}${amt:,.0f} ({html.escape(str(rec['分類']))})</span>"
-                                f"<span class='cal-note'>{html.escape(str(rec['備註']))}</span>"
-                                f"</div>"
-                            )
-                    if n_extra:
-                        body += f"<div class='cal-note'>另 {n_extra} 筆…</div>"
-                    total_html = ""
-                    if body:
-                        net_color = INCOME_COLOR if day_net >= 0 else EXPENSE_COLOR
-                        total_html = f"<span class='cal-day-total' style='color:{net_color};'>淨 {day_net:+,.0f}</span>"
-                    today_cls = " today" if date_str == today_str else ""
-                    cells.append(
-                        f"<div class='cal-card{today_cls}'><div class='cal-day-header'>"
-                        f"<span>{day}</span>{total_html}</div>{body}</div>"
-                    )
-            st.markdown(f"<div class='cal-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
-
-else:
-    st.markdown(HEADER_HTML, unsafe_allow_html=True)
-    st.warning("請先設定好 Streamlit Secrets 的 GCP 憑證，才能正常讀寫資料庫喔！")
+                tmp = df_
