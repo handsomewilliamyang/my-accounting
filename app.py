@@ -409,20 +409,36 @@ if "editor_ver" not in st.session_state:
 
 
 # ======================= 工具函數 =======================
-# 預設信用卡名稱（若備註未寫明哪家銀行，自動套用此名稱）
-DEFAULT_CARD_NAME = "富邦信用卡"
-KNOWN_BANKS = ["富邦", "國泰", "聯邦", "第一", "安泰", "台新", "玉山", "中信", "永豐", "星展"]
+# 支援辨識多間銀行關鍵字；若未標示銀行則顯示「信用卡刷 XX 元」
+BANK_KEYWORDS = [
+    ("富邦", "富邦信用卡"),
+    ("國泰", "國泰信用卡"),
+    ("聯邦", "聯邦信用卡"),
+    ("第一", "第一銀行信用卡"),
+    ("安泰", "安泰信用卡"),
+    ("連線", "LINE Bank信用卡"),
+    ("LINE Bank", "LINE Bank信用卡"),
+    ("台新", "台新信用卡"),
+    ("玉山", "玉山信用卡"),
+    ("中信", "中信信用卡"),
+    ("永豐", "永豐信用卡"),
+    ("星展", "星展信用卡"),
+]
 TASKER_VAR_RE = re.compile(r"\s*%[a-zA-Z_][a-zA-Z0-9_]*")
-AUTO_CARD_RE = re.compile(r"^\[自動\]\s*信用卡消費\s*([0-9,.]+)\s*元通知.*$")
+AUTO_CARD_RE = re.compile(r"^\[自動\]\s*(?:(.+?)\s*)?信用卡消費\s*([0-9,.]+)\s*元通知.*$")
 
 
 def clean_note_text(s, amt_str=""):
     txt = TASKER_VAR_RE.sub("", str(s or "")).strip()
     m = AUTO_CARD_RE.match(txt)
     if m:
-        amount_val = m.group(1) or str(amt_str).strip()
-        bank = next((b for b in KNOWN_BANKS if b in txt), "")
-        card_label = f"{bank}信用卡" if bank else DEFAULT_CARD_NAME
+        prefix = (m.group(1) or "").strip()
+        amount_val = m.group(2) or str(amt_str).strip()
+        search_pool = f"{prefix} {txt}".lower()
+        card_label = next(
+            (label for kw, label in BANK_KEYWORDS if kw.lower() in search_pool),
+            f"{prefix}信用卡" if prefix else "信用卡",
+        )
         return f"{card_label}刷 {amount_val} 元"
     return re.sub(r"\s{2,}", " ", txt).strip()
 
@@ -1119,7 +1135,7 @@ if sh and worksheet:
             dirty_df = df[df["_raw_note"] != df["備註"]]
             if not dirty_df.empty:
                 c_msg, c_btn = st.columns([3, 1.5])
-                c_msg.info(f"偵測到試算表底層有 {len(dirty_df)} 筆自動通知備註可格式化為「{DEFAULT_CARD_NAME}刷 XX 元」（畫面已自動轉換）。")
+                c_msg.info(f"偵測到試算表底層有 {len(dirty_df)} 筆自動通知備註可清理並格式化（畫面已自動轉換）。")
                 if c_btn.button("一鍵永久更新試算表", key="btn_clean_vars", **STRETCH):
                     try:
                         updates = [
