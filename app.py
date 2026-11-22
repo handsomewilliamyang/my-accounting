@@ -372,7 +372,6 @@ def require_login():
         st.error("尚未設定 Google 登入。請到 Streamlit Secrets 加入 [auth] 區塊。")
         st.stop()
 
-    # 檢查 redirect_uri 是否包含 /oauth2callback，避免觸發 Internal server error
     redir = str(st.secrets["auth"].get("redirect_uri", "")).strip()
     if not redir.endswith("/oauth2callback"):
         st.error(f"Secrets 中的 redirect_uri 格式錯誤（目前為：{redir}），結尾必須是 /oauth2callback 且不可有斜線。")
@@ -410,6 +409,24 @@ if "editor_ver" not in st.session_state:
 
 
 # ======================= 工具函數 =======================
+# 預設信用卡名稱（若備註未寫明哪家銀行，自動套用此名稱）
+DEFAULT_CARD_NAME = "富邦信用卡"
+KNOWN_BANKS = ["富邦", "國泰", "聯邦", "第一", "安泰", "台新", "玉山", "中信", "永豐", "星展"]
+TASKER_VAR_RE = re.compile(r"\s*%[a-zA-Z_][a-zA-Z0-9_]*")
+AUTO_CARD_RE = re.compile(r"^\[自動\]\s*信用卡消費\s*([0-9,.]+)\s*元通知.*$")
+
+
+def clean_note_text(s, amt_str=""):
+    txt = TASKER_VAR_RE.sub("", str(s or "")).strip()
+    m = AUTO_CARD_RE.match(txt)
+    if m:
+        amount_val = m.group(1) or str(amt_str).strip()
+        bank = next((b for b in KNOWN_BANKS if b in txt), "")
+        card_label = f"{bank}信用卡" if bank else DEFAULT_CARD_NAME
+        return f"{card_label}刷 {amount_val} 元"
+    return re.sub(r"\s{2,}", " ", txt).strip()
+
+
 def pad_row(row, n=6):
     return list(row[:n]) + [""] * max(0, n - len(row))
 
@@ -640,7 +657,7 @@ def render_budget_banner(df_month, total_spent, budgets, month_label):
 
 
 # ======================= 讀取記帳主表 =======================
-DF_COLS = ["_row"] + FIELDS + ["年月", "日期_std", "金額_num"]
+DF_COLS = ["_row"] + FIELDS + ["_raw_note", "年月", "日期_std", "金額_num"]
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -660,6 +677,8 @@ def fetch_data(_sh):
         rec = {"_row": r_idx + 2}
         for name, val in zip(FIELDS, p):
             rec[name] = str(val).strip()
+        rec["_raw_note"] = rec["備註"]
+        rec["備註"] = clean_note_text(rec["備註"], rec["金額"])
         rows.append(rec)
 
     df_t = pd.DataFrame(rows)
@@ -695,7 +714,8 @@ def rows_still_match(ws, df_rows):
     for (_, r), vals in zip(df_rows.iterrows(), got):
         cloud = pad_row(vals[0] if vals else [])
         for i, col in enumerate(FIELDS):
-            if str(cloud[i]).strip() != str(r[col]).strip():
+            expected = str(r["_raw_note"]).strip() if col == "備註" else str(r[col]).strip()
+            if str(cloud[i]).strip() != expected:
                 return False
     return True
 
@@ -719,7 +739,7 @@ def delete_rows(ws, row_nos):
 def already_recorded(df_all, ym, cat, note=None):
     m = (df_all["年月"] == ym) & (df_all["分類"] == cat)
     if note is not None:
-        m &= df_all["備註"] == note.strip()
+        m &= df_all["備註"] == clean_note_text(note)
     return bool(m.any())
 
 
@@ -768,7 +788,7 @@ def validate_row(r):
     if pay and pay not in PAY_OPTIONS:
         errs.append(f"付款方式必須是：{'、'.join(PAY_OPTIONS)}")
 
-    return errs, [date_ok, typ, cat, amt, pay, str(r["備註"])]
+    return errs, [date_ok, typ, cat, amt, pay, clean_note_text(r["備註"], amt)]
 
 
 # ======================= 主程式 =======================
@@ -869,11 +889,12 @@ if sh and worksheet:
             tx_date = st.date_input("日期", value=TODAY)
             note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
 
+            clean_n = clean_note_text(note, amount or "")
             gen_dup = False
             if amount is not None and amount > 0 and not df.empty:
                 gen_dup = bool((
                     (df["日期_std"] == str(tx_date)) & (df["類型"] == tx_type) & (df["分類"] == category)
-                    & (df["金額_num"] == float(amount)) & (df["備註"] == note.strip())
+                    & (df["金額_num"] == float(amount)) & (df["備註"] == clean_n)
                 ).any())
             allow_gen_dup = True
             if gen_dup:
@@ -886,7 +907,7 @@ if sh and worksheet:
                 elif amount is not None and amount > 0:
                     try:
                         worksheet.append_row(
-                            [str(tx_date), tx_type, category, amount, pay_method, note],
+                            [str(tx_date), tx_type, category, amount, pay_method, clean_n],
                             value_input_option="RAW",
                         )
                         clear_data_cache()
@@ -983,7 +1004,7 @@ if sh and worksheet:
                         else:
                             try:
                                 worksheet.append_row(
-                                    [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, expense_note],
+                                    [str(expense_date), "支出", "每月固定費用", default_expense, expense_pay, clean_note_text(expense_note)],
                                     value_input_option="RAW",
                                 )
                                 clear_data_cache()
@@ -1092,6 +1113,25 @@ if sh and worksheet:
 
     elif view_mode == MODE_LIST:
         st.subheader(f"{selected_month} 記帳明細")
+
+        # 偵測 Google 試算表底層是否還有舊格式或 %evtprm4，提供一鍵永久寫回試算表
+        if not df.empty:
+            dirty_df = df[df["_raw_note"] != df["備註"]]
+            if not dirty_df.empty:
+                c_msg, c_btn = st.columns([3, 1.5])
+                c_msg.info(f"偵測到試算表底層有 {len(dirty_df)} 筆自動通知備註可格式化為「{DEFAULT_CARD_NAME}刷 XX 元」（畫面已自動轉換）。")
+                if c_btn.button("一鍵永久更新試算表", key="btn_clean_vars", **STRETCH):
+                    try:
+                        updates = [
+                            {"range": f"F{int(r['_row'])}", "values": [[r["備註"]]]}
+                            for _, r in dirty_df.iterrows()
+                        ]
+                        worksheet.batch_update(updates, value_input_option="RAW")
+                        clear_data_cache()
+                        flash_and_rerun(f"已永久更新試算表中的 {len(updates)} 筆備註！")
+                    except Exception as e:
+                        st.error(f"更新失敗：{e}")
+
         if not df_selected.empty:
             st.download_button(
                 "匯出本月 CSV",
