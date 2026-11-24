@@ -226,17 +226,17 @@ def inject_css():
 
 
 def theme_show(fig, stretch):
-    # 若有「金額」Y軸，改放在 Y 軸正上方橫向顯示（端正不倒轉且不壓縮圖表寬度）
     y_title = ""
     try:
         y_title = fig.layout.yaxis.title.text or ""
     except Exception:
         y_title = ""
 
+    has_y_label = y_title in ("金額", "總金額")
     fig.update_layout(
-        margin=dict(l=8, r=8, t=54, b=8),
+        margin=dict(l=72 if has_y_label else 8, r=12, t=48, b=8),
         title=dict(font=dict(size=15), x=0, xanchor="left"),
-        legend=dict(title_text="", orientation="h", y=-0.22, x=0),
+        legend=dict(title_text="", orientation="h", y=-0.25, x=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
         hoverlabel=dict(font_size=12),
@@ -244,12 +244,14 @@ def theme_show(fig, stretch):
     fig.update_xaxes(title_text="", showgrid=False, linecolor="rgba(128,128,128,.3)")
     fig.update_yaxes(title_text="", gridcolor="rgba(128,128,128,.15)", zeroline=False)
 
-    if y_title in ("金額", "總金額"):
+    if has_y_label:
         fig.add_annotation(
-            text=f"{y_title} (元)",
+            text="<br>".join(list(y_title)),
             xref="paper", yref="paper",
-            x=0, y=1.08,
-            xanchor="left", yanchor="bottom",
+            x=0, y=0.5,
+            xanchor="right", yanchor="middle",
+            xshift=-48,
+            textangle=0,
             showarrow=False,
             font=dict(size=12, color="rgba(140,148,166,0.95)"),
         )
