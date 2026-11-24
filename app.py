@@ -1541,13 +1541,20 @@ if sh and worksheet:
                         .sum()
                         .sort_values("日期_std")
                     )
+                    daily["日"] = daily["日期_std"].apply(
+                        lambda s: f"{int(s.split('-')[-1])}日"
+                        if len(str(s).split("-")) == 3 and str(s).split("-")[-1].isdigit()
+                        else str(s)
+                    )
+                    day_order = daily.drop_duplicates("日期_std")["日"].tolist()
                     fig_bar = px.bar(
-                        daily, x="日期_std", y="金額_num",
+                        daily, x="日", y="金額_num",
                         title=f"{selected_month} 每日總支出趨勢",
                         color="分類", color_discrete_map=CAT_COLORS,
-                        labels={"日期_std": "日期", "金額_num": "金額"},
+                        labels={"日": "日期", "金額_num": "金額"},
+                        category_orders={"日": day_order},
                     )
-                    fig_bar.update_xaxes(type="category", categoryorder="category ascending")
+                    fig_bar.update_xaxes(type="category")
                     show(fig_bar)
 
                     pay_sum = df_expense.groupby("付款方式", as_index=False)["金額_num"].sum()
@@ -1608,17 +1615,20 @@ if sh and worksheet:
 
             if not df_y.empty:
                 all_12m = [f"{sel_year}-{m:02d}" for m in range(1, 13)]
+                month_labels = [f"{m}月" for m in range(1, 13)]
                 piv = df_y.pivot_table(
                     index="年月", columns="類型", values="金額_num", aggfunc="sum", fill_value=0
                 ).reindex(all_12m, fill_value=0).reset_index()
                 for c in ("收入", "支出"):
                     if c not in piv:
                         piv[c] = 0
-                long_y = piv.melt(id_vars="年月", value_vars=["收入", "支出"], var_name="類型", value_name="金額")
+                piv["月份"] = month_labels
+                long_y = piv.melt(id_vars="月份", value_vars=["收入", "支出"], var_name="類型", value_name="金額")
                 show(px.bar(
-                    long_y, x="年月", y="金額", color="類型", barmode="group",
+                    long_y, x="月份", y="金額", color="類型", barmode="group",
                     title=f"{sel_year} 年各月收支對比",
                     color_discrete_map={"收入": INCOME_COLOR, "支出": EXPENSE_COLOR},
+                    category_orders={"月份": month_labels},
                 ))
 
                 y_exp_df = df_y[df_y["類型"] == "支出"]
