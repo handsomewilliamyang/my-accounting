@@ -1530,27 +1530,26 @@ if sh and worksheet:
             if not df_selected.empty:
                 df_expense = df_selected[df_selected["類型"] == "支出"]
                 if not df_expense.empty:
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        show(px.pie(
-                            df_expense, values="金額_num", names="分類",
-                            title=f"{selected_month} 各類別支出佔比", hole=0.45,
-                            color="分類", color_discrete_map=CAT_COLORS,
-                        ))
-                    with c2:
-                        daily = (
-                            df_expense.groupby(["日期_std", "分類"], as_index=False)["金額_num"]
-                            .sum()
-                            .sort_values("日期_std")
-                        )
-                        fig_bar = px.bar(
-                            daily, x="日期_std", y="金額_num",
-                            title=f"{selected_month} 每日總支出趨勢",
-                            color="分類", color_discrete_map=CAT_COLORS,
-                            labels={"日期_std": "日期", "金額_num": "金額"},
-                        )
-                        fig_bar.update_xaxes(type="category", categoryorder="category ascending")
-                        show(fig_bar)
+                    show(px.pie(
+                        df_expense, values="金額_num", names="分類",
+                        title=f"{selected_month} 各類別支出佔比", hole=0.45,
+                        color="分類", color_discrete_map=CAT_COLORS,
+                    ))
+
+                    daily = (
+                        df_expense.groupby(["日期_std", "分類"], as_index=False)["金額_num"]
+                        .sum()
+                        .sort_values("日期_std")
+                    )
+                    fig_bar = px.bar(
+                        daily, x="日期_std", y="金額_num",
+                        title=f"{selected_month} 每日總支出趨勢",
+                        color="分類", color_discrete_map=CAT_COLORS,
+                        labels={"日期_std": "日期", "金額_num": "金額"},
+                    )
+                    fig_bar.update_xaxes(type="category", categoryorder="category ascending")
+                    show(fig_bar)
+
                     pay_sum = df_expense.groupby("付款方式", as_index=False)["金額_num"].sum()
                     pay_sum["付款方式"] = pay_sum["付款方式"].replace("", "未填")
                     show(px.bar(
@@ -1624,25 +1623,23 @@ if sh and worksheet:
 
                 y_exp_df = df_y[df_y["類型"] == "支出"]
                 if not y_exp_df.empty:
-                    yc1, yc2 = st.columns(2)
-                    with yc1:
-                        show(px.pie(
-                            y_exp_df, values="金額_num", names="分類",
-                            title=f"{sel_year} 全年各類別支出佔比", hole=0.45,
-                            color="分類", color_discrete_map=CAT_COLORS,
-                        ))
-                    with yc2:
-                        cat_rank = (
-                            y_exp_df.groupby("分類", as_index=False)["金額_num"]
-                            .sum()
-                            .sort_values("金額_num", ascending=True)
-                        )
-                        show(px.bar(
-                            cat_rank, x="金額_num", y="分類", orientation="h", text_auto=True,
-                            title=f"{sel_year} 全年分類花費排行",
-                            color="分類", color_discrete_map=CAT_COLORS,
-                            labels={"金額_num": "總金額", "分類": ""},
-                        ))
+                    show(px.pie(
+                        y_exp_df, values="金額_num", names="分類",
+                        title=f"{sel_year} 全年各類別支出佔比", hole=0.45,
+                        color="分類", color_discrete_map=CAT_COLORS,
+                    ))
+
+                    cat_rank = (
+                        y_exp_df.groupby("分類", as_index=False)["金額_num"]
+                        .sum()
+                        .sort_values("金額_num", ascending=True)
+                    )
+                    show(px.bar(
+                        cat_rank, x="金額_num", y="分類", orientation="h", text_auto=True,
+                        title=f"{sel_year} 全年分類花費排行",
+                        color="分類", color_discrete_map=CAT_COLORS,
+                        labels={"金額_num": "總金額", "分類": ""},
+                    ))
 
                     st.markdown(f"#### {sel_year} 年度 Top 10 單筆最高支出")
                     top10 = y_exp_df.sort_values("金額_num", ascending=False).head(10).copy()
