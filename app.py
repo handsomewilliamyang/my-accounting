@@ -15,7 +15,7 @@ WARN_COLOR = "#E0A030"
 PALETTE = [ACCENT, INCOME_COLOR, "#D9A441", EXPENSE_COLOR, "#B48EAD", "#7BAE9A", "#66B2B2", "#8A94A6"]
 CAT_COLORS = {
     "伙食": "#5B8FB9", "交通": "#7BAE9A", "購物": "#B48EAD",
-    "娛樂": "#D4A76A", "醫療": "#66B2B2", "每月固定費用": "#8A94A6", "其他支出": "#A9B8C9",
+    "娛樂": "#D4A76A", "醫療": "#66B2B2", "其他支出": "#A9B8C9", "每月固定費用": "#8A94A6",
 }
 
 CSS = """
@@ -331,7 +331,8 @@ def load_px():
 
 
 PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
-EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "醫療", "每月固定費用", "其他支出"]
+# 支出分類預設順序：兩個字分類在前 -> 其他支出 -> 每月固定費用（最後）
+EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "醫療", "其他支出", "每月固定費用"]
 INCOME_CATS = ["薪資", "其他收入"]
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
 SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式", "扣款日"]
@@ -350,6 +351,25 @@ MODE_CHART = "圖表"
 MODE_BUDGET = "預算"
 MODE_CAL = "月曆"
 MODE_YEAR = "年度"
+
+
+def sort_expense_cats(cats):
+    """固定排序規則：兩個字分類在前 -> 其他字數分類 -> 其他支出 -> 每月固定費用（最後）"""
+    seen = set()
+    clean_cats = []
+    for c in cats:
+        s = str(c).strip()
+        if s and s not in seen:
+            seen.add(s)
+            clean_cats.append(s)
+    two_char = [c for c in clean_cats if len(c) == 2 and c not in ("其他支出", "每月固定費用")]
+    others_mid = [c for c in clean_cats if len(c) != 2 and c not in ("其他支出", "每月固定費用")]
+    tail = []
+    if "其他支出" in clean_cats:
+        tail.append("其他支出")
+    if "每月固定費用" in clean_cats:
+        tail.append("每月固定費用")
+    return two_char + others_mid + tail
 
 
 def _ver_tuple():
@@ -709,18 +729,22 @@ if _exp:
 if _inc:
     INCOME_CATS = _inc
 
-# 確保「醫療」、「每月固定費用」與「薪資」存在，若試算表舊分類表缺少則自動補寫
 _missing_cats = []
 if "醫療" not in EXPENSE_CATS:
-    insert_pos = EXPENSE_CATS.index("每月固定費用") if "每月固定費用" in EXPENSE_CATS else len(EXPENSE_CATS)
-    EXPENSE_CATS.insert(insert_pos, "醫療")
+    EXPENSE_CATS.append("醫療")
     _missing_cats.append(["支出", "醫療"])
+if "其他支出" not in EXPENSE_CATS:
+    EXPENSE_CATS.append("其他支出")
+    _missing_cats.append(["支出", "其他支出"])
 if "每月固定費用" not in EXPENSE_CATS:
     EXPENSE_CATS.append("每月固定費用")
     _missing_cats.append(["支出", "每月固定費用"])
 if "薪資" not in INCOME_CATS:
     INCOME_CATS.append("薪資")
     _missing_cats.append(["收入", "薪資"])
+
+# 套用指定排序：兩個字分類在前 -> 其他支出 -> 每月固定費用（最後）
+EXPENSE_CATS = sort_expense_cats(EXPENSE_CATS)
 
 if _missing_cats and cat_ws and _cat_rows:
     try:
@@ -1567,7 +1591,6 @@ if sh and worksheet:
                 else:
                     st.success(f"月底預估花費 ${projected:,.0f}，仍在預算內。")
 
-        # 信用卡分期剩餘總覽
         st.markdown("#### 信用卡分期總覽")
         active_inst, future_inst_map = analyze_installments(df, current_month_str)
         if active_inst:
