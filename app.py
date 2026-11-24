@@ -147,7 +147,7 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .pill.zero { background:var(--card); color:inherit; opacity:.7; }
 .pill.rate { opacity:1; font-weight:600; white-space:nowrap; }
 
-/* ---------- 預算卡 ---------- */
+/* ---------- 預算與分期進度卡 ---------- */
 .bud {
   background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
   padding:14px 16px; margin-bottom:10px; font-variant-numeric:tabular-nums;
@@ -161,12 +161,14 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .bud-ok > i   { background:linear-gradient(90deg,#3FAF86,#5CCBA3); }
 .bud-warn > i { background:linear-gradient(90deg,#E0A030,#F0BE5A); }
 .bud-over > i { background:linear-gradient(90deg,#E0675F,#F08A83); }
+.bud-inst > i { background:linear-gradient(90deg,#6FA3D8,#4177BA); }
 .t-ok { color:var(--income); font-weight:600; } .t-warn { color:var(--warning); font-weight:600; } .t-over { color:var(--expense); font-weight:700; }
+.t-inst { color:var(--primary); font-weight:600; }
 @keyframes grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
 
 /* ---------- 主導覽 ---------- */
 .st-key-view_mode { margin:8px 0 20px; }
-.st-key-view_mode button { min-height:44px; font-weight:500; }
+.st-key-view_mode button { min-height:44px; font-weight:500; padding:0 8px; }
 
 /* ---------- 月曆 ---------- */
 .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; }
@@ -249,21 +251,24 @@ def _delta(v, invert=False):
     return f"<span class='pill {'pos' if good else 'neg'}'>{sign}{abs(v):,.0f}</span>"
 
 
-def summary_card(month, income, expense, net, d_inc, d_exp, d_net, rate=None):
+def summary_card(period_label, income, expense, net, d_inc=None, d_exp=None, d_net=None, rate=None, sub_label="本月結餘", compare_label="較上月"):
     cls = "pos" if net >= 0 else "neg"
     rate_html = ""
     if rate is not None:
         rate_html = f"<span class='pill rate {'pos' if rate >= 0 else 'neg'}'>儲蓄率 {rate:.0%}</span>"
+    delta_top = f"<div class='hero-delta'><span class='mut'>{compare_label}</span> {_delta(d_net)}</div>" if d_net is not None else ""
+    delta_inc_html = f"<div class='hero-delta'>{_delta(d_inc)}</div>" if d_inc is not None else ""
+    delta_exp_html = f"<div class='hero-delta'>{_delta(d_exp, invert=True)}</div>" if d_exp is not None else ""
     st.markdown(
         f"<div class='hero'>"
-        f"<div class='hero-top'><div class='hero-label'>{month} 本月結餘</div>{rate_html}</div>"
+        f"<div class='hero-top'><div class='hero-label'>{period_label} {sub_label}</div>{rate_html}</div>"
         f"<div class='hero-amount {cls}'>{money(net)}</div>"
-        f"<div class='hero-delta'><span class='mut'>較上月</span> {_delta(d_net)}</div>"
+        f"{delta_top}"
         f"<div class='hero-row'>"
         f"<div class='hero-col'><div class='hero-label'>收入</div><div class='v'>{money(income)}</div>"
-        f"<div class='hero-delta'>{_delta(d_inc)}</div></div>"
+        f"{delta_inc_html}</div>"
         f"<div class='hero-col'><div class='hero-label'>支出</div><div class='v'>{money(expense)}</div>"
-        f"<div class='hero-delta'>{_delta(d_exp, invert=True)}</div></div>"
+        f"{delta_exp_html}</div>"
         f"</div></div>",
         unsafe_allow_html=True,
     )
@@ -279,6 +284,19 @@ def budget_card(name, spent, limit):
         f"<div class='bud-top'><b>{html.escape(str(name))}</b><span class='t-{status}'>{ratio:.0%}</span></div>"
         f"<div class='bud-sub'>${spent:,.0f} / ${limit:,.0f} {left_txt}</div>"
         f"<div class='bud-bar bud-{status}'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def installment_card(title, paid_cnt, total_cnt, per_amt, remain_amt, end_ym):
+    ratio = paid_cnt / total_cnt if total_cnt > 0 else 0
+    rem_cnt = max(0, total_cnt - paid_cnt)
+    st.markdown(
+        f"<div class='bud'>"
+        f"<div class='bud-top'><b>{html.escape(str(title))}</b><span class='t-inst'>已繳 {paid_cnt}/{total_cnt} 期（剩 {rem_cnt} 期）</span></div>"
+        f"<div class='bud-sub'>每期 ${per_amt:,.0f} 未清償餘額 ${remain_amt:,.0f} 預計 {end_ym} 繳清</div>"
+        f"<div class='bud-bar bud-inst'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -331,6 +349,7 @@ MODE_LIST = "明細"
 MODE_CHART = "圖表"
 MODE_BUDGET = "預算"
 MODE_CAL = "月曆"
+MODE_YEAR = "年度"
 
 
 def _ver_tuple():
@@ -429,6 +448,7 @@ BANK_KEYWORDS = [
 ]
 TASKER_VAR_RE = re.compile(r"\s*%[a-zA-Z_][a-zA-Z0-9_]*")
 AUTO_CARD_RE = re.compile(r"^\[自動\]\s*(?:(.+?)\s*)?信用卡消費\s*([0-9,.]+)\s*元通知.*$")
+INSTALLMENT_RE = re.compile(r"^(.+?)\s*\((\d+)/(\d+)期\)$")
 
 
 def clean_note_text(s, amt_str=""):
@@ -447,7 +467,6 @@ def clean_note_text(s, amt_str=""):
 
 
 def add_months(base_date, offset):
-    """將日期往後推 offset 個月（自動處理月底日期，例如 1/31 + 1 個月 = 2/28）"""
     total_m = base_date.year * 12 + (base_date.month - 1) + offset
     y, m = divmod(total_m, 12)
     m += 1
@@ -456,11 +475,52 @@ def add_months(base_date, offset):
 
 
 def split_installments(total_amt, months):
-    """將總金額平分為 months 期（整數除法，餘數加在第一期）"""
     total_int = int(round(total_amt))
     base = total_int // months
     rem = total_int % months
     return [base + (1 if i < rem else 0) for i in range(months)]
+
+
+def analyze_installments(df_all, ref_ym):
+    """掃描所有 (X/Y期) 紀錄，彙整進行中分期與未來各月分期應繳金額"""
+    if df_all.empty:
+        return [], {}
+    exp = df_all[df_all["類型"] == "支出"]
+    groups = {}
+    future_by_month = {}
+
+    for _, r in exp.iterrows():
+        m = INSTALLMENT_RE.match(str(r["備註"]).strip())
+        if not m:
+            continue
+        base_name = m.group(1).strip()
+        cur_idx = int(m.group(2))
+        tot_cnt = int(m.group(3))
+        ym = str(r["年月"])
+        amt = float(r["金額_num"])
+
+        if ym > ref_ym:
+            future_by_month[ym] = future_by_month.get(ym, 0.0) + amt
+
+        key = (base_name, tot_cnt, r["分類"])
+        g = groups.setdefault(key, {
+            "title": base_name,
+            "total_cnt": tot_cnt,
+            "paid_cnt": 0,
+            "remain_amt": 0.0,
+            "per_amt": amt,
+            "end_ym": ym,
+        })
+        if ym <= ref_ym:
+            g["paid_cnt"] = max(g["paid_cnt"], cur_idx)
+        else:
+            g["remain_amt"] += amt
+        if ym > g["end_ym"]:
+            g["end_ym"] = ym
+
+    active_list = [g for g in groups.values() if g["remain_amt"] > 0 or g["paid_cnt"] < g["total_cnt"]]
+    active_list.sort(key=lambda x: x["end_ym"])
+    return active_list, dict(sorted(future_by_month.items()))
 
 
 def pad_row(row, n=6):
@@ -887,18 +947,7 @@ if sh and worksheet:
     net_balance = total_income - total_expense
     prev_net = prev_income - prev_expense
 
-    summary_card(
-        selected_month, total_income, total_expense, net_balance,
-        total_income - prev_income, total_expense - prev_expense, net_balance - prev_net,
-        rate=(net_balance / total_income if total_income > 0 else None),
-    )
-
-    render_budget_banner(df_selected, total_expense, budgets, selected_month)
-    n_pend = len(pending_fixed(df, fixed_templates, TODAY))
-    if n_pend:
-        st.info(f"有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「{MODE_ADD}」→「固定」補登。")
-
-    MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL]
+    MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL, MODE_YEAR]
     if st.session_state.get("view_mode") not in MODES:
         st.session_state.view_mode = st.session_state.get("_last_mode", MODE_ADD)
     view_mode = st.segmented_control(
@@ -911,6 +960,19 @@ if sh and worksheet:
     view_mode = view_mode or MODE_ADD
     st.session_state["_last_mode"] = view_mode
 
+    # 非「年度」模式時顯示當月總覽卡與提醒橫幅
+    if view_mode != MODE_YEAR:
+        summary_card(
+            selected_month, total_income, total_expense, net_balance,
+            total_income - prev_income, total_expense - prev_expense, net_balance - prev_net,
+            rate=(net_balance / total_income if total_income > 0 else None),
+        )
+        render_budget_banner(df_selected, total_expense, budgets, selected_month)
+        n_pend = len(pending_fixed(df, fixed_templates, TODAY))
+        if n_pend:
+            st.info(f"有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「{MODE_ADD}」→「固定」補登。")
+
+    # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
         tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算設定"])
 
@@ -928,7 +990,6 @@ if sh and worksheet:
             pay_method = st.selectbox("付款方式", PAY_OPTIONS, key="gen_pay")
             st.session_state.update(_last_type=tx_type, _last_cat=category, _last_pay=pay_method)
 
-            # 信用卡分期設定（僅「支出 + 信用卡」時顯示）
             installments = 1
             if tx_type == "支出" and pay_method == "信用卡":
                 installments = st.number_input(
@@ -942,7 +1003,6 @@ if sh and worksheet:
 
             clean_n = clean_note_text(note, amount or "")
 
-            # 分期試算預覽
             if installments > 1 and amount is not None and amount > 0:
                 parts = split_installments(amount, installments)
                 end_date = add_months(tx_date, installments - 1)
@@ -1192,9 +1252,11 @@ if sh and worksheet:
                     except Exception as e:
                         st.error(f"儲存失敗: {e}")
 
+    # ---------- 記帳明細 ----------
     elif view_mode == MODE_LIST:
         st.subheader(f"{selected_month} 記帳明細")
 
+        # 1) 自動通知殘留變數清理提醒
         if not df.empty:
             dirty_df = df[df["_raw_note"] != df["備註"]]
             if not dirty_df.empty:
@@ -1211,6 +1273,42 @@ if sh and worksheet:
                         flash_and_rerun(f"已永久更新試算表中的 {len(updates)} 筆備註！")
                     except Exception as e:
                         st.error(f"更新失敗：{e}")
+
+        # 2) 「其他支出」待確認快速歸類區（讓自動記帳未歸類的項目一秒改好分類）
+        if not df_selected.empty:
+            uncat_df = df_selected[(df_selected["類型"] == "支出") & (df_selected["分類"] == "其他支出")]
+            if not uncat_df.empty:
+                with st.expander(f"🏷️ 本月有 {len(uncat_df)} 筆「其他支出」待確認分類（點此快速歸類）", expanded=False):
+                    st.caption("直接下拉修改正確分類，改好後按「套用分類修改」即可。")
+                    quick_cat_disp = uncat_df[["日期", "金額", "付款方式", "備註", "分類"]].copy()
+                    edited_quick_cat = st.data_editor(
+                        quick_cat_disp,
+                        hide_index=True,
+                        disabled=["日期", "金額", "付款方式", "備註"],
+                        key=f"quick_cat_{ver}_{selected_month}",
+                        column_config={
+                            "分類": st.column_config.SelectboxColumn("分類", options=EXPENSE_CATS, required=True),
+                        },
+                        **STRETCH,
+                    )
+                    if st.button("套用分類修改", type="primary", key="btn_apply_quick_cat"):
+                        try:
+                            changed_q = [
+                                i for i in edited_quick_cat.index
+                                if str(edited_quick_cat.loc[i, "分類"]).strip() != "其他支出"
+                            ]
+                            if not changed_q:
+                                st.info("尚未變更任何分類。")
+                            else:
+                                updates = [
+                                    {"range": f"C{int(df_selected.loc[i, '_row'])}", "values": [[str(edited_quick_cat.loc[i, "分類"]).strip()]]}
+                                    for i in changed_q
+                                ]
+                                worksheet.batch_update(updates, value_input_option="RAW")
+                                clear_data_cache()
+                                flash_and_rerun(f"已將 {len(changed_q)} 筆支出歸類完成！")
+                        except Exception as e:
+                            st.error(f"更新分類失敗：{e}")
 
         if not df_selected.empty:
             st.download_button(
@@ -1335,6 +1433,7 @@ if sh and worksheet:
             icon=":material/download:",
         )
 
+    # ---------- 圖表分析 ----------
     elif view_mode == MODE_CHART:
         px = load_px()
         if not df.empty:
@@ -1420,6 +1519,7 @@ if sh and worksheet:
                     title=f"{selected_month} 收入來源佔比", hole=0.45,
                 ))
 
+    # ---------- 預算與分期追蹤 ----------
     elif view_mode == MODE_BUDGET:
         st.subheader(f"{selected_month} 預算追蹤")
         if not budgets:
@@ -1455,6 +1555,32 @@ if sh and worksheet:
                 else:
                     st.success(f"月底預估花費 ${projected:,.0f}，仍在預算內。")
 
+        # 信用卡分期剩餘總覽
+        st.markdown("#### 信用卡分期總覽")
+        active_inst, future_inst_map = analyze_installments(df, current_month_str)
+        if active_inst:
+            total_rem_debt = sum(x["remain_amt"] for x in active_inst)
+            next_m_str = add_months(TODAY, 1).strftime("%Y-%m")
+            next_m_amt = future_inst_map.get(next_m_str, 0.0)
+            ic1, ic2 = st.columns(2)
+            ic1.metric("未清償分期總餘額", f"${total_rem_debt:,.0f}")
+            ic2.metric(f"下月（{next_m_str}）分期應繳", f"${next_m_amt:,.0f}")
+
+            for item in active_inst:
+                installment_card(
+                    item["title"], item["paid_cnt"], item["total_cnt"],
+                    item["per_amt"], item["remain_amt"], item["end_ym"],
+                )
+
+            if future_inst_map:
+                with st.expander("查看未來各月份分期應繳明細"):
+                    fut_df = pd.DataFrame(
+                        [{"月份": k, "分期預扣金額": f"${v:,.0f}"} for k, v in future_inst_map.items()]
+                    )
+                    st.dataframe(fut_df, hide_index=True, **STRETCH)
+        else:
+            st.caption("目前沒有進行中的分期帳單（在「記一筆」選信用卡並設定分期期數即可自動追蹤）。")
+
         st.markdown("#### 儲蓄目標")
         goal = cfg_num(CFG_GOAL, 0)
         all_inc, all_exp = sums(df)
@@ -1472,6 +1598,7 @@ if sh and worksheet:
         else:
             st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算設定」設定。")
 
+    # ---------- 月曆 ----------
     elif view_mode == MODE_CAL:
         st.subheader(f"{selected_month} 日曆視圖")
 
@@ -1542,6 +1669,90 @@ if sh and worksheet:
                         f"<span>{day}</span>{total_html}</div>{body}</div>"
                     )
             st.markdown(f"<div class='cal-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
+
+    # ---------- 年度總結 ----------
+    elif view_mode == MODE_YEAR:
+        px = load_px()
+        st.subheader("年度財務總結")
+
+        valid_ym = df[df["年月"].fillna("").str.fullmatch(r"\d{4}-\d{2}")]
+        years = sorted(
+            set(valid_ym["年月"].str.slice(0, 4).tolist() + [str(TODAY.year)]),
+            reverse=True,
+        )
+        sel_year = st.selectbox("選擇年份", years, key="year_sel")
+        df_y = valid_ym[valid_ym["年月"].str.startswith(f"{sel_year}-")]
+
+        y_inc, y_exp = sums(df_y)
+        y_net = y_inc - y_exp
+
+        prev_year = str(int(sel_year) - 1)
+        df_prev_y = valid_ym[valid_ym["年月"].str.startswith(f"{prev_year}-")]
+        py_inc, py_exp = sums(df_prev_y)
+        has_prev_y = not df_prev_y.empty
+
+        summary_card(
+            f"{sel_year} 全年", y_inc, y_exp, y_net,
+            d_inc=(y_inc - py_inc if has_prev_y else None),
+            d_exp=(y_exp - py_exp if has_prev_y else None),
+            d_net=(y_net - (py_inc - py_exp) if has_prev_y else None),
+            rate=(y_net / y_inc if y_inc > 0 else None),
+            sub_label="年度結餘",
+            compare_label="較去年",
+        )
+
+        if not df_y.empty:
+            # 1) 全年 12 個月收支對比柱狀圖
+            all_12m = [f"{sel_year}-{m:02d}" for m in range(1, 13)]
+            piv = df_y.pivot_table(
+                index="年月", columns="類型", values="金額_num", aggfunc="sum", fill_value=0
+            ).reindex(all_12m, fill_value=0).reset_index()
+            for c in ("收入", "支出"):
+                if c not in piv:
+                    piv[c] = 0
+            long_y = piv.melt(id_vars="年月", value_vars=["收入", "支出"], var_name="類型", value_name="金額")
+            show(px.bar(
+                long_y, x="年月", y="金額", color="類型", barmode="group",
+                title=f"{sel_year} 年各月收支對比",
+                color_discrete_map={"收入": INCOME_COLOR, "支出": EXPENSE_COLOR},
+            ))
+
+            # 2) 年度支出分類佔比 + 付款方式佔比
+            y_exp_df = df_y[df_y["類型"] == "支出"]
+            if not y_exp_df.empty:
+                yc1, yc2 = st.columns(2)
+                with yc1:
+                    show(px.pie(
+                        y_exp_df, values="金額_num", names="分類",
+                        title=f"{sel_year} 全年各類別支出佔比", hole=0.45,
+                        color="分類", color_discrete_map=CAT_COLORS,
+                    ))
+                with yc2:
+                    cat_rank = (
+                        y_exp_df.groupby("分類", as_index=False)["金額_num"]
+                        .sum()
+                        .sort_values("金額_num", ascending=True)
+                    )
+                    show(px.bar(
+                        cat_rank, x="金額_num", y="分類", orientation="h", text_auto=True,
+                        title=f"{sel_year} 全年分類花費排行",
+                        color="分類", color_discrete_map=CAT_COLORS,
+                        labels={"金額_num": "總金額", "分類": ""},
+                    ))
+
+                # 3) 年度 Top 10 單筆最高支出
+                st.markdown(f"#### {sel_year} 年度 Top 10 單筆最高支出")
+                top10 = y_exp_df.sort_values("金額_num", ascending=False).head(10).copy()
+                top10["金額顯示"] = top10["金額_num"].map(lambda x: f"${x:,.0f}")
+                st.dataframe(
+                    top10[["日期_std", "分類", "金額顯示", "付款方式", "備註"]].rename(
+                        columns={"日期_std": "日期", "金額顯示": "金額"}
+                    ),
+                    hide_index=True,
+                    **STRETCH,
+                )
+        else:
+            st.info(f"{sel_year} 年目前尚無記帳資料。")
 
 else:
     st.markdown(HEADER_HTML, unsafe_allow_html=True)
