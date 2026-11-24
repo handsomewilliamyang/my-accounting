@@ -81,8 +81,12 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 .stButton button:focus-visible, .stDownloadButton button:focus-visible {
   outline:2px solid var(--primary); outline-offset:2px;
 }
-.st-key-btn_delete button { color:var(--expense) !important; border-color:var(--expense) !important; }
-.st-key-btn_delete button:hover { background:var(--expense-soft) !important; }
+.st-key-btn_delete button,
+.st-key-btn_delete_exp button,
+.st-key-btn_delete_inc button { color:var(--expense) !important; border-color:var(--expense) !important; }
+.st-key-btn_delete button:hover,
+.st-key-btn_delete_exp button:hover,
+.st-key-btn_delete_inc button:hover { background:var(--expense-soft) !important; }
 
 /* ---------- 表單元件 ---------- */
 .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {
@@ -313,6 +317,7 @@ EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "每月固定費用", "�
 INCOME_CATS = ["薪資", "其他收入"]
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
 SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式", "扣款日"]
+QUICK_HEADER = ["按鈕名稱", "分類", "金額", "付款方式"]
 BUDGET_HEADER = ["分類", "每月上限"]
 CONFIG_HEADER = ["項目", "值"]
 CFG_SALARY = "預設月薪"
@@ -409,7 +414,6 @@ if "editor_ver" not in st.session_state:
 
 
 # ======================= 工具函數 =======================
-# 支援辨識多間銀行關鍵字；若未標示銀行則顯示「信用卡刷 XX 元」
 BANK_KEYWORDS = [
     ("富邦", "富邦信用卡"),
     ("國泰", "國泰信用卡"),
@@ -537,6 +541,16 @@ settings_ws = get_ws(
     "固定支出設定", 100, 4,
     [SETTINGS_HEADER, ["孝親費", "5000", "現金", "5"], ["電信費", "599", "信用卡", "10"]],
 )
+quick_ws = get_ws(
+    "常用快記設定", 50, 4,
+    [
+        QUICK_HEADER,
+        ["早餐", "伙食", "65", "現金"],
+        ["咖啡", "伙食", "55", "行動支付"],
+        ["午餐", "伙食", "110", "現金"],
+        ["加油", "交通", "150", "信用卡"],
+    ],
+)
 budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
 cat_ws = get_ws(
     "分類設定", 100, 2,
@@ -544,7 +558,13 @@ cat_ws = get_ws(
 )
 config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
-CFG_SHEETS = (("固定支出設定", 4), ("預算設定", 2), ("分類設定", 2), ("系統設定", 2))
+CFG_SHEETS = (
+    ("固定支出設定", 4),
+    ("常用快記設定", 4),
+    ("預算設定", 2),
+    ("分類設定", 2),
+    ("系統設定", 2),
+)
 
 
 @st.cache_data(ttl=CACHE_TTL_CFG)
@@ -595,8 +615,26 @@ def build_templates(rows):
     return templates
 
 
+def build_quick_buttons(rows):
+    items = []
+    for r in rows:
+        name = str(r[0]).strip()
+        if not name:
+            continue
+        cat = str(r[1]).strip() or "其他支出"
+        amt = to_number(r[2])
+        if isinstance(amt, str) or amt <= 0:
+            continue
+        pay = str(r[3]).strip() if str(r[3]).strip() in PAY_OPTIONS else "現金"
+        items.append({"name": name, "cat": cat, "amount": amt, "pay": pay})
+    return items
+
+
 settings_rows = load_rows(settings_ws, "固定支出設定")
 fixed_templates = build_templates(settings_rows)
+
+quick_rows = load_rows(quick_ws, "常用快記設定")
+quick_buttons = build_quick_buttons(quick_rows)
 
 
 # ======================= 預算設定 =======================
@@ -891,6 +929,64 @@ if sh and worksheet:
 
         @st.fragment
         def add_entry_form():
+            if quick_buttons:
+                st.caption("⚡ 常用消費一鍵快記（直接以今天日期寫入）")
+                cols_per_row = 2
+                for row_start in range(0, len(quick_buttons), cols_per_row):
+                    row_items = quick_buttons[row_start:row_start + cols_per_row]
+                    cols = st.columns(cols_per_row)
+                    for idx, qb in enumerate(row_items):
+                        btn_label = f"{qb['name']}  ${qb['amount']:,}（{qb['pay']}）"
+                        if cols[idx].button(btn_label, key=f"qb_{row_start + idx}_{ver}", **STRETCH):
+                            try:
+                                worksheet.append_row(
+                                    [str(TODAY), "支出", qb["cat"], qb["amount"], qb["pay"], qb["name"]],
+                                    value_input_option="RAW",
+                                )
+                                clear_data_cache()
+                                flash_and_rerun(f"已一鍵記帳：{qb['name']} ${qb['amount']:,}！")
+                            except Exception as e:
+                                st.error(f"一鍵記帳失敗: {e}")
+
+            with st.expander("設定常用快記按鈕"):
+                if quick_ws:
+                    df_quick = pd.DataFrame(quick_rows, columns=QUICK_HEADER)
+                    df_quick["金額"] = pd.to_numeric(
+                        df_quick["金額"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+                    )
+                    edited_quick = st.data_editor(
+                        df_quick,
+                        num_rows="dynamic",
+                        hide_index=True,
+                        key=f"quick_editor_{ver}",
+                        column_config={
+                            "按鈕名稱": st.column_config.TextColumn("按鈕名稱", required=True),
+                            "分類": st.column_config.SelectboxColumn("分類", options=EXPENSE_CATS, required=True),
+                            "金額": st.column_config.NumberColumn("金額", min_value=1, step=5, format="%d", required=True),
+                            "付款方式": st.column_config.SelectboxColumn("付款方式", options=PAY_OPTIONS, required=True),
+                        },
+                        **STRETCH,
+                    )
+                    if st.button("儲存快記按鈕", key="btn_save_quick"):
+                        try:
+                            clean_q = edited_quick.dropna(subset=["按鈕名稱", "分類", "金額"])
+                            clean_q = clean_q[clean_q["按鈕名稱"].astype(str).str.strip() != ""]
+                            new_data = [QUICK_HEADER] + [
+                                [str(a).strip(), str(b).strip(), to_number(c), str(d).strip() or "現金"]
+                                for a, b, c, d in clean_q.itertuples(index=False)
+                            ]
+                            old_len = len(quick_ws.get_all_values())
+                            quick_ws.update(range_name="A1", values=new_data)
+                            if old_len > len(new_data):
+                                quick_ws.batch_clear([f"A{len(new_data) + 1}:D{old_len}"])
+                            fetch_config_bundle.clear()
+                            bump_editor()
+                            flash_and_rerun("常用快記按鈕已更新！")
+                        except Exception as e:
+                            st.error(f"儲存失敗: {e}")
+
+            st.divider()
+
             for wkey, lkey in (("gen_type", "_last_type"), ("gen_cat", "_last_cat"), ("gen_pay", "_last_pay")):
                 if wkey not in st.session_state and lkey in st.session_state:
                     st.session_state[wkey] = st.session_state[lkey]
@@ -1130,7 +1226,6 @@ if sh and worksheet:
     elif view_mode == MODE_LIST:
         st.subheader(f"{selected_month} 記帳明細")
 
-        # 偵測 Google 試算表底層是否還有舊格式或 %evtprm4，提供一鍵永久寫回試算表
         if not df.empty:
             dirty_df = df[df["_raw_note"] != df["備註"]]
             if not dirty_df.empty:
@@ -1177,84 +1272,89 @@ if sh and worksheet:
             v3.metric("支出", f"${view.loc[view['類型'] == '支出', '金額_num'].sum():,.0f}")
             filter_sig = abs(hash((tuple(cat_filter), tuple(pay_filter), kw.strip())))
 
-            df_display = view[FIELDS].copy()
-            df_display.insert(0, "刪除", False)
+            # 將「支出」與「收入」分開呈現，分類下拉選單各自只顯示對應類別且移除空白選項
+            def render_tx_editor(sub_df, tx_kind, cat_opts, key_suffix):
+                if sub_df.empty:
+                    return
+                st.markdown(f"#### {tx_kind}明細（{len(sub_df)} 筆）")
+                disp = sub_df[FIELDS].copy()
+                disp.insert(0, "刪除", False)
 
-            edited_df = st.data_editor(
-                df_display,
-                hide_index=True,
-                key=f"expense_table_{ver}_{filter_sig}",
-                column_config={
-                    "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
-                    "日期": st.column_config.TextColumn("日期", width="small"),
-                    "類型": st.column_config.SelectboxColumn("類型", options=["支出", "收入"], width="small"),
-                    "分類": st.column_config.SelectboxColumn(
-                        "分類", options=EXPENSE_CATS + INCOME_CATS, width="small"
-                    ),
-                    "金額": st.column_config.TextColumn("金額", width="small"),
-                    "付款方式": st.column_config.SelectboxColumn("付款方式", options=PAY_OPTIONS, width="small"),
-                    "備註": st.column_config.TextColumn("備註", width="large"),
-                },
-                **STRETCH,
-            )
+                edited = st.data_editor(
+                    disp,
+                    hide_index=True,
+                    key=f"table_{key_suffix}_{ver}_{filter_sig}",
+                    column_config={
+                        "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
+                        "日期": st.column_config.TextColumn("日期", width="small"),
+                        "類型": st.column_config.SelectboxColumn("類型", options=["支出", "收入"], width="small", required=True),
+                        "分類": st.column_config.SelectboxColumn("分類", options=cat_opts, width="small", required=True),
+                        "金額": st.column_config.TextColumn("金額", width="small"),
+                        "付款方式": st.column_config.SelectboxColumn("付款方式", options=PAY_OPTIONS, width="small", required=True),
+                        "備註": st.column_config.TextColumn("備註", width="large"),
+                    },
+                    **STRETCH,
+                )
 
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button("刪除所選項目", key="btn_delete", icon=":material/delete:", **STRETCH):
-                    checked = edited_df[edited_df["刪除"] == True].index.tolist()  # noqa: E712
-                    if not checked:
-                        st.warning("請先勾選您想要刪除的項目！")
-                    else:
-                        try:
-                            targets = df_selected.loc[checked]
-                            if not rows_still_match(worksheet, targets):
-                                st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
-                                fetch_data.clear()
-                            else:
-                                n_del = delete_rows(worksheet, targets["_row"])
-                                clear_data_cache()
-                                flash_and_rerun(f"成功刪除 {n_del} 筆項目！")
-                        except Exception as e:
-                            st.error(f"刪除失敗：{e}")
-
-            with col2:
-                if st.button("儲存修改內容", type="primary", icon=":material/check:", **STRETCH):
-                    try:
-                        save_df = edited_df.drop(columns=["刪除"]).fillna("").astype(str)
-                        orig_df = df_selected[FIELDS].astype(str)
-                        changed_idx = [
-                            i for i in save_df.index
-                            if any(save_df.loc[i, c].strip() != orig_df.loc[i, c].strip() for c in FIELDS)
-                        ]
-                        if not changed_idx:
-                            st.info("沒有偵測到任何修改。")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button(f"刪除所選{tx_kind}", key=f"btn_delete_{key_suffix}", icon=":material/delete:", **STRETCH):
+                        checked = edited[edited["刪除"] == True].index.tolist()  # noqa: E712
+                        if not checked:
+                            st.warning("請先勾選您想要刪除的項目！")
                         else:
-                            error_lines = []
-                            cleaned = {}
-                            for i in changed_idx:
-                                errs, clean_row = validate_row(save_df.loc[i])
-                                n = int(df_selected.loc[i, "_row"])
-                                if errs:
-                                    error_lines.append(f"**試算表第 {n} 列**：" + "；".join(errs))
+                            try:
+                                targets = df_selected.loc[checked]
+                                if not rows_still_match(worksheet, targets):
+                                    st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
+                                    fetch_data.clear()
                                 else:
-                                    cleaned[i] = (n, clean_row)
+                                    n_del = delete_rows(worksheet, targets["_row"])
+                                    clear_data_cache()
+                                    flash_and_rerun(f"成功刪除 {n_del} 筆項目！")
+                            except Exception as e:
+                                st.error(f"刪除失敗：{e}")
 
-                            if error_lines:
-                                st.error("以下資料格式有問題，尚未儲存：\n\n" + "\n\n".join(error_lines))
-                            elif not rows_still_match(worksheet, df_selected.loc[changed_idx]):
-                                st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
-                                fetch_data.clear()
+                with c2:
+                    if st.button(f"儲存{tx_kind}修改", type="primary", key=f"btn_save_{key_suffix}", icon=":material/check:", **STRETCH):
+                        try:
+                            save_df = edited.drop(columns=["刪除"]).fillna("").astype(str)
+                            orig_df = df_selected.loc[save_df.index, FIELDS].astype(str)
+                            changed_idx = [
+                                i for i in save_df.index
+                                if any(save_df.loc[i, c].strip() != orig_df.loc[i, c].strip() for c in FIELDS)
+                            ]
+                            if not changed_idx:
+                                st.info("沒有偵測到任何修改。")
                             else:
-                                updates = [
-                                    {"range": f"A{n}:F{n}", "values": [clean_row]}
-                                    for n, clean_row in cleaned.values()
-                                ]
-                                worksheet.batch_update(updates, value_input_option="RAW")
-                                clear_data_cache()
-                                flash_and_rerun(f"已同步 {len(changed_idx)} 筆修改到 Google 試算表！")
-                    except Exception as e:
-                        st.error(f"儲存失敗：{e}")
+                                error_lines = []
+                                cleaned = {}
+                                for i in changed_idx:
+                                    errs, clean_row = validate_row(save_df.loc[i])
+                                    n = int(df_selected.loc[i, "_row"])
+                                    if errs:
+                                        error_lines.append(f"**試算表第 {n} 列**：" + "；".join(errs))
+                                    else:
+                                        cleaned[i] = (n, clean_row)
+
+                                if error_lines:
+                                    st.error("以下資料格式有問題，尚未儲存：\n\n" + "\n\n".join(error_lines))
+                                elif not rows_still_match(worksheet, df_selected.loc[changed_idx]):
+                                    st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
+                                    fetch_data.clear()
+                                else:
+                                    updates = [
+                                        {"range": f"A{n}:F{n}", "values": [clean_row]}
+                                        for n, clean_row in cleaned.values()
+                                    ]
+                                    worksheet.batch_update(updates, value_input_option="RAW")
+                                    clear_data_cache()
+                                    flash_and_rerun(f"已同步 {len(changed_idx)} 筆修改到 Google 試算表！")
+                        except Exception as e:
+                            st.error(f"儲存失敗：{e}")
+
+            render_tx_editor(view[view["類型"] == "支出"], "支出", EXPENSE_CATS, "exp")
+            render_tx_editor(view[view["類型"] == "收入"], "收入", INCOME_CATS, "inc")
         else:
             st.info(f"所選月份 {selected_month} 目前還沒有任何記錄！")
 
