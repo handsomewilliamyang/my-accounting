@@ -1,5 +1,7 @@
 import html
 import re
+import struct
+import zlib
 import calendar as py_calendar
 from datetime import date, datetime, timedelta, timezone
 
@@ -14,8 +16,10 @@ EXPENSE_COLOR = "#E0675F"
 WARN_COLOR = "#E0A030"
 PALETTE = [ACCENT, INCOME_COLOR, "#D9A441", EXPENSE_COLOR, "#B48EAD", "#7BAE9A", "#66B2B2", "#8A94A6"]
 CAT_COLORS = {
-    "伙食": "#5B8FB9", "交通": "#7BAE9A", "購物": "#B48EAD",
-    "娛樂": "#D4A76A", "醫療": "#66B2B2", "其他支出": "#A9B8C9", "每月固定費用": "#8A94A6",
+    "伙食": "#5B8FB9", "飲料": "#7FA9C9", "交通": "#7BAE9A", "日用": "#8FB996",
+    "購物": "#B48EAD", "娛樂": "#D4A76A", "居家": "#C98A72", "醫療": "#66B2B2",
+    "學習": "#6E85B7", "社交": "#D1889E", "保險": "#7C90A0",
+    "其他支出": "#A9B8C9", "每月固定費用": "#8A94A6",
 }
 
 CSS = """
@@ -146,6 +150,33 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .pill.neg { background:var(--expense-soft); }
 .pill.zero { background:var(--card); color:inherit; opacity:.7; }
 .pill.rate { opacity:1; font-weight:600; white-space:nowrap; }
+
+/* ---------- 發票載具條碼卡 ---------- */
+.barcode-card {
+  background:#ffffff !important;
+  color:#111111 !important;
+  border:1px solid var(--line);
+  border-radius:var(--r-md);
+  padding:18px 16px 14px;
+  text-align:center;
+  box-shadow:var(--shadow-card);
+  margin:8px 0 14px;
+}
+.barcode-card svg {
+  width:100%;
+  max-width:380px;
+  height:auto;
+  display:block;
+  margin:0 auto;
+}
+.barcode-code {
+  margin-top:8px;
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  font-size:1.15rem;
+  font-weight:700;
+  letter-spacing:.18em;
+  color:#111111 !important;
+}
 
 /* ---------- 預算與分期進度卡 ---------- */
 .bud {
@@ -315,11 +346,166 @@ def installment_card(title, paid_cnt, total_cnt, per_amt, remain_amt, end_ym):
     st.markdown(
         f"<div class='bud'>"
         f"<div class='bud-top'><b>{html.escape(str(title))}</b><span class='t-inst'>已繳 {paid_cnt}/{total_cnt} 期（剩 {rem_cnt} 期）</span></div>"
-        f"<div class='bud-sub'>每期 ${per_amt:,.0f} 未清償餘額 ${remain_amt:,.0f} 預計 {end_ym} 繳清</div>"
+        f"<div class='bud-sub'>每期 ${per_amt:,.0f} · 未清償餘額 ${remain_amt:,.0f} · 預計 {end_ym} 繳清</div>"
         f"<div class='bud-bar bud-inst'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
         f"</div>",
         unsafe_allow_html=True,
     )
+
+
+# ======================= 發票載具 Code 39 條碼（SVG 與 PNG 圖卡） =======================
+CODE39_TABLE = {
+    "0": "nnnwwnwnn", "1": "wnnwnnnnw", "2": "nnwwnnnnw", "3": "wnwwnnnnn",
+    "4": "nnnwwnnnw", "5": "wnnwwnnnn", "6": "nnwwwnnnn", "7": "nnnwnnwnw",
+    "8": "wnnwnnwnn", "9": "nnwwnnwnn",
+    "A": "wnnnnwnnw", "B": "nnwnnwnnw", "C": "wnwnnwnnn", "D": "nnnnwwnnw",
+    "E": "wnnnwwnnn", "F": "nnwnwwnnn", "G": "nnnnnwwnw", "H": "wnnnnwwnn",
+    "I": "nnwnnwwnn", "J": "nnnnwwwnn", "K": "wnnnnnnww", "L": "nnwnnnnww",
+    "M": "wnwnnnnwn", "N": "nnnnwnnww", "O": "wnnnwnnwn", "P": "nnwnwnnwn",
+    "Q": "nnnnnnwww", "R": "wnnnnnwwn", "S": "nnwnnnwwn", "T": "nnnnwnwwn",
+    "U": "wwnnnnnnw", "V": "nwwnnnnnw", "W": "wwwnnnnnn", "X": "nwnnwnnnw",
+    "Y": "wwnnwnnnn", "Z": "nwwnwnnnn",
+    "-": "nwnnnnwnw", ".": "wwnnnnwnn", " ": "nwwnnnwnn", "$": "nwnwnwnnn",
+    "/": "nwnwnnnwn", "+": "nwnnnwnwn", "%": "nnnwnwnwn", "*": "nwnnwnwnn",
+}
+CARRIER_RE = re.compile(r"^/[0-9A-Z.+\-]{7}$")
+
+# 5x7 點陣字型，供純 Python 產出載具 PNG 圖卡（免裝 Pillow）
+_FONT_5X7 = {
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00110", "01000", "10000", "11111"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
+    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "D": ("11100", "10010", "10001", "10001", "10001", "10010", "11100"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "G": ("01110", "10001", "10000", "10111", "10001", "10001", "01110"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    "J": ("00111", "00010", "00010", "00010", "10010", "10010", "01100"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "11011", "10001"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+    "/": ("00001", "00010", "00010", "00100", "01000", "01000", "10000"),
+    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
+    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
+    ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
+}
+
+
+def render_code39_svg(code_str, bar_height=76, narrow=2, wide=6, quiet=22):
+    text = f"*{code_str.strip().upper()}*"
+    rects = []
+    x = quiet
+    for idx, ch in enumerate(text):
+        pattern = CODE39_TABLE.get(ch)
+        if not pattern:
+            return ""
+        for i, elem in enumerate(pattern):
+            w = wide if elem == "w" else narrow
+            if i % 2 == 0:
+                rects.append(f"<rect x='{x}' y='0' width='{w}' height='{bar_height}' fill='#000000'/>")
+            x += w
+        if idx < len(text) - 1:
+            x += narrow
+    total_w = x + quiet
+    return (
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {total_w} {bar_height}' "
+        f"role='img' aria-label='手機條碼 {html.escape(code_str)}'>"
+        f"<rect width='{total_w}' height='{bar_height}' fill='#ffffff'/>"
+        f"{''.join(rects)}</svg>"
+    )
+
+
+def render_code39_png(code_str, narrow=4, wide=12, quiet=64, bar_height=168):
+    """純 Python 產出高對比白底黑條 PNG，存進手機相簿後可直接設為桌面相片小工具。"""
+    clean = code_str.strip().upper()
+    text = f"*{clean}*"
+    row_pixels = bytearray([255] * quiet)
+    for idx, ch in enumerate(text):
+        pattern = CODE39_TABLE.get(ch)
+        if not pattern:
+            return b""
+        for i, elem in enumerate(pattern):
+            w = wide if elem == "w" else narrow
+            color = 0 if i % 2 == 0 else 255
+            row_pixels.extend([color] * w)
+        if idx < len(text) - 1:
+            row_pixels.extend([255] * narrow)
+    row_pixels.extend([255] * quiet)
+
+    width = len(row_pixels)
+    pad_top, gap_text, scale, pad_bottom = 48, 26, 4, 44
+    text_h = 7 * scale
+    height = pad_top + bar_height + gap_text + text_h + pad_bottom
+
+    white_row = bytes([255] * width)
+    bar_row = bytes(row_pixels)
+
+    # 繪製底部條碼文字
+    char_step = 8 * scale
+    total_text_w = len(clean) * char_step - 3 * scale
+    start_x = max(0, (width - total_text_w) // 2)
+    text_rows = [bytearray([255] * width) for _ in range(text_h)]
+    for ci, ch in enumerate(clean):
+        glyph = _FONT_5X7.get(ch)
+        if not glyph:
+            continue
+        gx = start_x + ci * char_step
+        for gy, bits in enumerate(glyph):
+            for gx_off, bit in enumerate(bits):
+                if bit == "1":
+                    for sy in range(scale):
+                        row_buf = text_rows[gy * scale + sy]
+                        px0 = gx + gx_off * scale
+                        row_buf[px0:px0 + scale] = b"\x00" * scale
+
+    scanlines = bytearray()
+    for _ in range(pad_top):
+        scanlines.append(0)
+        scanlines.extend(white_row)
+    for _ in range(bar_height):
+        scanlines.append(0)
+        scanlines.extend(bar_row)
+    for _ in range(gap_text):
+        scanlines.append(0)
+        scanlines.extend(white_row)
+    for tr in text_rows:
+        scanlines.append(0)
+        scanlines.extend(tr)
+    for _ in range(pad_bottom):
+        scanlines.append(0)
+        scanlines.extend(white_row)
+
+    def _chunk(tag, payload):
+        crc = zlib.crc32(tag + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + tag + payload + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    idat = zlib.compress(bytes(scanlines), level=9)
+    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
 
 
 # ======================= 基本設定 =======================
@@ -351,14 +537,23 @@ def load_px():
 
 
 PAY_OPTIONS = ["現金", "信用卡", "行動支付"]
-EXPENSE_CATS = ["伙食", "交通", "購物", "娛樂", "醫療", "其他支出", "每月固定費用"]
-INCOME_CATS = ["薪資", "其他收入"]
+DEFAULT_EXPENSE_CATS = [
+    "伙食", "飲料", "交通", "日用", "購物", "娛樂", "居家",
+    "醫療", "學習", "社交", "保險", "其他支出", "每月固定費用",
+]
+DEFAULT_INCOME_CATS = ["薪資", "獎金", "投資", "副業", "回饋", "其他收入"]
+EXPENSE_CATS = list(DEFAULT_EXPENSE_CATS)
+INCOME_CATS = list(DEFAULT_INCOME_CATS)
 FIELDS = ["日期", "類型", "分類", "金額", "付款方式", "備註"]
 SETTINGS_HEADER = ["項目名稱", "預設金額", "付款方式", "扣款日"]
 BUDGET_HEADER = ["分類", "每月上限"]
+CAT_HEADER = ["類型", "分類"]
 CONFIG_HEADER = ["項目", "值"]
 CFG_SALARY = "預設月薪"
 CFG_GOAL = "儲蓄目標"
+CFG_CARRIER = "發票載具"
+CFG_CAT_VER = "預設分類版本"
+CURRENT_CAT_VER = "v2"
 WEEKDAY_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
 TOTAL_KEY = "總預算"
 CACHE_TTL = 60
@@ -511,6 +706,13 @@ def add_months(base_date, offset):
     return date(y, m, min(base_date.day, last_day))
 
 
+def shift_ym(ym, offset):
+    y, m = map(int, ym.split("-"))
+    total_m = y * 12 + (m - 1) + offset
+    ny, nm = divmod(total_m, 12)
+    return f"{ny}-{nm + 1:02d}"
+
+
 def split_installments(total_amt, months):
     total_int = int(round(total_amt))
     base = total_int // months
@@ -529,16 +731,19 @@ def analyze_installments(df_all, ref_ym):
         m = INSTALLMENT_RE.match(str(r["備註"]).strip())
         if not m:
             continue
+        ym = str(r["年月"])
+        if not re.fullmatch(r"\d{4}-\d{2}", ym):
+            continue
         base_name = m.group(1).strip()
         cur_idx = int(m.group(2))
         tot_cnt = int(m.group(3))
-        ym = str(r["年月"])
         amt = float(r["金額_num"])
+        start_ym = shift_ym(ym, -(cur_idx - 1))
 
         if ym > ref_ym:
             future_by_month[ym] = future_by_month.get(ym, 0.0) + amt
 
-        key = (base_name, tot_cnt, r["分類"])
+        key = (base_name, tot_cnt, r["分類"], start_ym)
         g = groups.setdefault(key, {
             "title": base_name,
             "total_cnt": tot_cnt,
@@ -548,7 +753,7 @@ def analyze_installments(df_all, ref_ym):
             "end_ym": ym,
         })
         if ym <= ref_ym:
-            g["paid_cnt"] = max(g["paid_cnt"], cur_idx)
+            g["paid_cnt"] += 1
         else:
             g["remain_amt"] += amt
         if ym > g["end_ym"]:
@@ -564,7 +769,7 @@ def pad_row(row, n=6):
 
 
 def to_number(v):
-    s = str(v).strip().replace(",", "")
+    s = str(v).strip().replace(",", "").replace("$", "").replace("NT", "").strip()
     try:
         f = float(s)
         return int(f) if f.is_integer() else f
@@ -573,8 +778,12 @@ def to_number(v):
 
 
 def flash_and_rerun(msg):
+    """在 @st.fragment 內外都能強制整頁刷新，確保頂部總覽卡、預算警示與 toast 同步更新。"""
     st.session_state["flash"] = msg
-    st.rerun()
+    try:
+        st.rerun(scope="app")
+    except TypeError:
+        st.rerun()
 
 
 def safe_load(fn, arg, default, label):
@@ -595,6 +804,8 @@ def md_escape(s):
 
 
 def sums(d):
+    if d.empty:
+        return 0.0, 0.0
     return (
         d.loc[d["類型"] == "收入", "金額_num"].sum(),
         d.loc[d["類型"] == "支出", "金額_num"].sum(),
@@ -656,7 +867,7 @@ settings_ws = get_ws(
 budget_ws = get_ws("預算設定", 50, 2, [BUDGET_HEADER, [TOTAL_KEY, 30000], ["伙食", 8000]])
 cat_ws = get_ws(
     "分類設定", 100, 2,
-    [["類型", "分類"]] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
+    [CAT_HEADER] + [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS],
 )
 config_ws = get_ws("系統設定", 20, 2, [CONFIG_HEADER, [CFG_SALARY, 45000], [CFG_GOAL, 0]])
 
@@ -737,39 +948,6 @@ budget_rows = load_rows(budget_ws, "預算設定")
 budgets = build_budgets(budget_rows)
 
 
-# ======================= 分類設定 =======================
-_cat_rows = load_rows(cat_ws, "分類設定")
-_exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
-_inc = [c.strip() for t, c in _cat_rows if t.strip() == "收入" and c.strip()]
-if _exp:
-    EXPENSE_CATS = _exp
-if _inc:
-    INCOME_CATS = _inc
-
-_missing_cats = []
-if "醫療" not in EXPENSE_CATS:
-    EXPENSE_CATS.append("醫療")
-    _missing_cats.append(["支出", "醫療"])
-if "其他支出" not in EXPENSE_CATS:
-    EXPENSE_CATS.append("其他支出")
-    _missing_cats.append(["支出", "其他支出"])
-if "每月固定費用" not in EXPENSE_CATS:
-    EXPENSE_CATS.append("每月固定費用")
-    _missing_cats.append(["支出", "每月固定費用"])
-if "薪資" not in INCOME_CATS:
-    INCOME_CATS.append("薪資")
-    _missing_cats.append(["收入", "薪資"])
-
-EXPENSE_CATS = sort_expense_cats(EXPENSE_CATS)
-
-if _missing_cats and cat_ws and _cat_rows:
-    try:
-        cat_ws.append_rows(_missing_cats)
-        fetch_config_bundle.clear()
-    except Exception:
-        pass
-
-
 # ======================= 系統設定 =======================
 config_rows = load_rows(config_ws, "系統設定")
 config = {str(r[0]).strip(): r[1] for r in config_rows}
@@ -778,6 +956,10 @@ config = {str(r[0]).strip(): r[1] for r in config_rows}
 def cfg_num(key, default):
     v = to_number(config.get(key, default))
     return default if isinstance(v, str) else v
+
+
+def cfg_str(key, default=""):
+    return str(config.get(key, default) or "").strip()
 
 
 def save_config(key, value):
@@ -789,6 +971,54 @@ def save_config(key, value):
     else:
         config_ws.append_row([key, value])
     fetch_config_bundle.clear()
+
+
+# ======================= 分類設定 =======================
+_cat_rows = load_rows(cat_ws, "分類設定")
+_exp = [c.strip() for t, c in _cat_rows if t.strip() == "支出" and c.strip()]
+_inc = [c.strip() for t, c in _cat_rows if t.strip() == "收入" and c.strip()]
+if _exp:
+    EXPENSE_CATS = _exp
+if _inc:
+    INCOME_CATS = _inc
+
+_missing_cats = []
+_need_v2_seed = cfg_str(CFG_CAT_VER, "") != CURRENT_CAT_VER
+
+if _need_v2_seed:
+    for c in DEFAULT_EXPENSE_CATS:
+        if c not in EXPENSE_CATS:
+            EXPENSE_CATS.append(c)
+            _missing_cats.append(["支出", c])
+    for c in DEFAULT_INCOME_CATS:
+        if c not in INCOME_CATS:
+            INCOME_CATS.append(c)
+            _missing_cats.append(["收入", c])
+else:
+    for c in ("其他支出", "每月固定費用"):
+        if c not in EXPENSE_CATS:
+            EXPENSE_CATS.append(c)
+            _missing_cats.append(["支出", c])
+    if "薪資" not in INCOME_CATS:
+        INCOME_CATS.append("薪資")
+        _missing_cats.append(["收入", "薪資"])
+
+EXPENSE_CATS = sort_expense_cats(EXPENSE_CATS)
+ALL_CATS = list(dict.fromkeys(EXPENSE_CATS + INCOME_CATS))
+
+if cat_ws and _cat_rows:
+    if _missing_cats:
+        try:
+            cat_ws.append_rows(_missing_cats)
+            fetch_config_bundle.clear()
+        except Exception:
+            pass
+    if _need_v2_seed and config_ws:
+        try:
+            save_config(CFG_CAT_VER, CURRENT_CAT_VER)
+            config[CFG_CAT_VER] = CURRENT_CAT_VER
+        except Exception:
+            pass
 
 
 def render_budget_banner(df_month, total_spent, budgets, month_label):
@@ -865,6 +1095,8 @@ def clear_data_cache():
 
 
 def rows_still_match(ws, df_rows):
+    if df_rows.empty:
+        return True
     ranges = [f"A{int(n)}:F{int(n)}" for n in df_rows["_row"]]
     got = ws.batch_get(ranges)
     for (_, r), vals in zip(df_rows.iterrows(), got):
@@ -893,6 +1125,8 @@ def delete_rows(ws, row_nos):
 
 
 def already_recorded(df_all, ym, cat, note=None):
+    if df_all.empty:
+        return False
     m = (df_all["年月"] == ym) & (df_all["分類"] == cat)
     if note is not None:
         m &= df_all["備註"] == clean_note_text(note)
@@ -951,6 +1185,7 @@ def validate_row(r):
 if sh and worksheet:
     df = safe_load(fetch_data, sh, pd.DataFrame(columns=DF_COLS), "記帳資料")
     ver = st.session_state.editor_ver
+    carrier_code = cfg_str(CFG_CARRIER, "").upper()
 
     with st.container(key="topbar"):
         h1, h2, h3 = st.columns([8, 1.2, 1.2])
@@ -961,6 +1196,25 @@ if sh and worksheet:
             bump_editor()
             st.rerun()
         h3.button("", icon=":material/logout:", help="登出", key="btn_logout", on_click=st.logout, **STRETCH)
+
+    # 快捷發票載具條碼（若有設定，可一鍵展開供結帳掃描或下載 PNG 設為桌面小工具）
+    if carrier_code and CARRIER_RE.match(carrier_code):
+        with st.expander(f"📱 發票載具條碼（{carrier_code}）— 結帳點此出示", expanded=False):
+            barcode_svg = render_code39_svg(carrier_code)
+            st.markdown(
+                f"<div class='barcode-card'>{barcode_svg}"
+                f"<div class='barcode-code'>{html.escape(carrier_code)}</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.download_button(
+                "下載條碼圖片（PNG，可放手機桌面相片小工具）",
+                render_code39_png(carrier_code),
+                file_name=f"載具條碼_{carrier_code.lstrip('/')}.png",
+                mime="image/png",
+                key="btn_dl_carrier_top",
+                icon=":material/download:",
+                **STRETCH,
+            )
 
     if not df.empty:
         bad_rows = df[~df["年月"].fillna("").str.fullmatch(r"\d{4}-\d{2}")]
@@ -982,13 +1236,33 @@ if sh and worksheet:
         if 0 <= i < len(all_months):
             st.session_state.month_sel = all_months[i]
 
+    def go_current_month():
+        st.session_state.month_sel = current_month_str
+
+    cur_m_idx = all_months.index(st.session_state.month_sel)
+    is_not_current = st.session_state.month_sel != current_month_str
+
     with st.container(key="month_nav"):
-        nav1, nav2, nav3 = st.columns([1, 3, 1])
-        nav1.button("", icon=":material/chevron_left:", help="上個月", key="btn_prev",
-                    on_click=shift_month, args=(-1,), **STRETCH)
+        if is_not_current:
+            nav1, nav2, nav3, nav4 = st.columns([1, 2.4, 1, 1.2])
+        else:
+            nav1, nav2, nav3 = st.columns([1, 3, 1])
+            nav4 = None
+        nav1.button(
+            "", icon=":material/chevron_left:", help="上個月", key="btn_prev",
+            on_click=shift_month, args=(-1,),
+            disabled=(cur_m_idx >= len(all_months) - 1),
+            **STRETCH,
+        )
         nav2.selectbox("月份", all_months, key="month_sel", label_visibility="collapsed")
-        nav3.button("", icon=":material/chevron_right:", help="下個月", key="btn_next",
-                    on_click=shift_month, args=(1,), **STRETCH)
+        nav3.button(
+            "", icon=":material/chevron_right:", help="下個月", key="btn_next",
+            on_click=shift_month, args=(1,),
+            disabled=(cur_m_idx <= 0),
+            **STRETCH,
+        )
+        if nav4 is not None:
+            nav4.button("回本月", key="btn_back_today", on_click=go_current_month, **STRETCH)
     selected_month = st.session_state.month_sel
 
     df_selected = (
@@ -1028,7 +1302,9 @@ if sh and worksheet:
 
     # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
-        tab_general, tab_salary, tab_fixed, tab_budget = st.tabs(["記一筆", "薪資", "固定", "預算設定"])
+        tab_general, tab_salary, tab_fixed, tab_settings = st.tabs(
+            ["記一筆", "薪資", "固定", "預算與設定"]
+        )
 
         @st.fragment
         def add_entry_form():
@@ -1254,7 +1530,7 @@ if sh and worksheet:
                         except Exception as e:
                             st.error(f"儲存失敗: {e}")
 
-        with tab_budget:
+        with tab_settings:
             st.caption("設定每月支出上限。「總預算」是整個月的上限，也可以替個別分類另外設定。")
             if budget_ws:
                 df_budget = pd.DataFrame(budget_rows, columns=BUDGET_HEADER)
@@ -1306,6 +1582,77 @@ if sh and worksheet:
                     except Exception as e:
                         st.error(f"儲存失敗: {e}")
 
+                st.divider()
+                with st.expander("📱 發票載具條碼設定（可下載 PNG 放手機桌面小工具）", expanded=False):
+                    st.caption("輸入你的財政部手機條碼（格式為 `/` 開頭加 7 碼，例如 `/AB12345`）。下載 PNG 圖片存進手機相簿後，可用手機內建「相片小工具」釘在桌面，不用開網頁就能直接刷。")
+                    c_in1, c_in2 = st.columns([3, 1.3])
+                    new_carrier = c_in1.text_input(
+                        "手機條碼", value=carrier_code, max_chars=8,
+                        placeholder="/AB12345", label_visibility="collapsed",
+                        key=f"carrier_input_{ver}",
+                    ).strip().upper()
+                    if c_in2.button("儲存條碼", key="btn_save_carrier", **STRETCH):
+                        if new_carrier and not CARRIER_RE.match(new_carrier):
+                            st.error("格式錯誤：必須是 `/` 開頭加上 7 碼英數字或 `.` `-` `+`（例如 `/AB12345`）。")
+                        else:
+                            try:
+                                save_config(CFG_CARRIER, new_carrier)
+                                bump_editor()
+                                flash_and_rerun("已更新手機條碼！" if new_carrier else "已清除手機條碼。")
+                            except Exception as e:
+                                st.error(f"儲存失敗：{e}")
+
+                    if carrier_code and CARRIER_RE.match(carrier_code):
+                        st.markdown(
+                            f"<div class='barcode-card'>{render_code39_svg(carrier_code)}"
+                            f"<div class='barcode-code'>{html.escape(carrier_code)}</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.download_button(
+                            "下載條碼圖片（PNG，可放手機桌面相片小工具）",
+                            render_code39_png(carrier_code),
+                            file_name=f"載具條碼_{carrier_code.lstrip('/')}.png",
+                            mime="image/png",
+                            key="btn_dl_carrier_cfg",
+                            icon=":material/download:",
+                            **STRETCH,
+                        )
+
+            if cat_ws:
+                st.divider()
+                with st.expander("線上管理支出／收入分類", expanded=False):
+                    st.caption("可直接新增、修改或刪除分類；系統會保留「其他支出」、「每月固定費用」與「薪資」等核心分類。")
+                    cat_table = [["支出", c] for c in EXPENSE_CATS] + [["收入", c] for c in INCOME_CATS]
+                    df_cats = pd.DataFrame(cat_table, columns=CAT_HEADER)
+                    edited_cats = st.data_editor(
+                        df_cats,
+                        num_rows="dynamic",
+                        hide_index=True,
+                        key=f"cat_editor_{ver}",
+                        column_config={
+                            "類型": st.column_config.SelectboxColumn("類型", options=["支出", "收入"], required=True),
+                            "分類": st.column_config.TextColumn("分類", required=True),
+                        },
+                        **STRETCH,
+                    )
+                    if st.button("儲存分類設定"):
+                        try:
+                            clean_c = edited_cats.fillna("").astype(str)
+                            clean_c["類型"] = clean_c["類型"].str.strip()
+                            clean_c["分類"] = clean_c["分類"].str.strip()
+                            clean_c = clean_c[(clean_c["類型"].isin(["支出", "收入"])) & (clean_c["分類"] != "")]
+                            clean_c = clean_c.drop_duplicates(subset=["類型", "分類"], keep="first")
+                            new_data = [CAT_HEADER] + clean_c.values.tolist()
+                            old_len = len(cat_ws.get_all_values())
+                            cat_ws.update(range_name="A1", values=new_data)
+                            if old_len > len(new_data):
+                                cat_ws.batch_clear([f"A{len(new_data) + 1}:B{old_len}"])
+                            fetch_config_bundle.clear()
+                            bump_editor()
+                            flash_and_rerun("分類設定已更新！")
+                        except Exception as e:
+                            st.error(f"分類儲存失敗：{e}")
+
     # ---------- 記帳明細 ----------
     elif view_mode == MODE_LIST:
         st.subheader(f"{selected_month} 記帳明細")
@@ -1317,13 +1664,17 @@ if sh and worksheet:
                 c_msg.info(f"偵測到試算表底層有 {len(dirty_df)} 筆自動通知備註可清理並格式化（畫面已自動轉換）。")
                 if c_btn.button("一鍵永久更新試算表", key="btn_clean_vars", **STRETCH):
                     try:
-                        updates = [
-                            {"range": f"F{int(r['_row'])}", "values": [[r["備註"]]]}
-                            for _, r in dirty_df.iterrows()
-                        ]
-                        worksheet.batch_update(updates, value_input_option="RAW")
-                        clear_data_cache()
-                        flash_and_rerun(f"已永久更新試算表中的 {len(updates)} 筆備註！")
+                        if not rows_still_match(worksheet, dirty_df):
+                            st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
+                            fetch_data.clear()
+                        else:
+                            updates = [
+                                {"range": f"F{int(r['_row'])}", "values": [[r["備註"]]]}
+                                for _, r in dirty_df.iterrows()
+                            ]
+                            worksheet.batch_update(updates, value_input_option="RAW")
+                            clear_data_cache()
+                            flash_and_rerun(f"已永久更新試算表中的 {len(updates)} 筆備註！")
                     except Exception as e:
                         st.error(f"更新失敗：{e}")
 
@@ -1351,6 +1702,9 @@ if sh and worksheet:
                             ]
                             if not changed_q:
                                 st.info("尚未變更任何分類。")
+                            elif not rows_still_match(worksheet, df_selected.loc[changed_q]):
+                                st.error("雲端資料已被其他裝置更動，請重新整理頁面後再試一次。")
+                                fetch_data.clear()
                             else:
                                 updates = [
                                     {"range": f"C{int(df_selected.loc[i, '_row'])}", "values": [[str(edited_quick_cat.loc[i, "分類"]).strip()]]}
@@ -1372,7 +1726,7 @@ if sh and worksheet:
             )
 
             f1, f2, f3 = st.columns([2, 2, 3])
-            cat_filter = f1.multiselect("分類", EXPENSE_CATS + INCOME_CATS)
+            cat_filter = f1.multiselect("分類", ALL_CATS)
             pay_filter = f2.multiselect("付款方式", PAY_OPTIONS)
             kw = f3.text_input("搜尋備註")
 
@@ -1389,9 +1743,9 @@ if sh and worksheet:
             v1.metric("筆數", f"{len(view)}")
             v2.metric("收入", f"${view.loc[view['類型'] == '收入', '金額_num'].sum():,.0f}")
             v3.metric("支出", f"${view.loc[view['類型'] == '支出', '金額_num'].sum():,.0f}")
-            filter_sig = abs(hash((tuple(cat_filter), tuple(pay_filter), kw.strip())))
+            filter_sig = f"{'|'.join(cat_filter)}__{'|'.join(pay_filter)}__{kw.strip()}"
 
-            def render_tx_editor(sub_df, tx_kind, cat_opts, key_suffix):
+            def render_tx_editor(sub_df, tx_kind, key_suffix):
                 if sub_df.empty:
                     return
                 st.markdown(f"#### {tx_kind}明細（{len(sub_df)} 筆）")
@@ -1406,7 +1760,7 @@ if sh and worksheet:
                         "刪除": st.column_config.CheckboxColumn("刪除", width="small"),
                         "日期": st.column_config.TextColumn("日期", width="small"),
                         "類型": st.column_config.SelectboxColumn("類型", options=["支出", "收入"], width="small", required=True),
-                        "分類": st.column_config.SelectboxColumn("分類", options=cat_opts, width="small", required=True),
+                        "分類": st.column_config.SelectboxColumn("分類", options=ALL_CATS, width="small", required=True),
                         "金額": st.column_config.TextColumn("金額", width="small"),
                         "付款方式": st.column_config.SelectboxColumn("付款方式", options=PAY_OPTIONS, width="small", required=True),
                         "備註": st.column_config.TextColumn("備註", width="large"),
@@ -1471,8 +1825,8 @@ if sh and worksheet:
                         except Exception as e:
                             st.error(f"儲存失敗：{e}")
 
-            render_tx_editor(view[view["類型"] == "支出"], "支出", EXPENSE_CATS, "exp")
-            render_tx_editor(view[view["類型"] == "收入"], "收入", INCOME_CATS, "inc")
+            render_tx_editor(view[view["類型"] == "支出"], "支出", "exp")
+            render_tx_editor(view[view["類型"] == "收入"], "收入", "inc")
         else:
             st.info(f"所選月份 {selected_month} 目前還沒有任何記錄！")
 
@@ -1498,7 +1852,11 @@ if sh and worksheet:
 
         if chart_scope == "月度分析":
             if not df.empty:
-                valid = df[df["年月"].str.fullmatch(r"\d{4}-\d{2}", na=False)]
+                # 僅統計截至本月的歷史紀錄，避免未來信用卡分期把近 12 個月趨勢圖拉歪
+                valid = df[
+                    df["年月"].str.fullmatch(r"\d{4}-\d{2}", na=False)
+                    & (df["年月"] <= current_month_str)
+                ]
                 if not valid.empty:
                     trend = valid.pivot_table(
                         index="年月", columns="類型", values="金額_num", aggfunc="sum", fill_value=0
@@ -1510,7 +1868,7 @@ if sh and worksheet:
                         id_vars="年月", value_vars=["收入", "支出"], var_name="類型", value_name="金額"
                     )
                     show(px.line(
-                        long, x="年月", y="金額", color="類型", markers=True, title="近 12 個月收支趨勢",
+                        long, x="年月", y="金額", color="類型", markers=True, title="近 12 個月收支趨勢（截至本月）",
                         line_shape="spline",
                         color_discrete_map={"收入": INCOME_COLOR, "支出": EXPENSE_COLOR},
                     ))
@@ -1668,7 +2026,7 @@ if sh and worksheet:
     elif view_mode == MODE_BUDGET:
         st.subheader(f"{selected_month} 預算追蹤")
         if not budgets:
-            st.info(f"尚未設定預算，請到「{MODE_ADD}」→「預算設定」設定。")
+            st.info(f"尚未設定預算，請到「{MODE_ADD}」→「預算與設定」設定。")
         else:
             exp_df = df_selected[df_selected["類型"] == "支出"]
             items = []
@@ -1702,8 +2060,8 @@ if sh and worksheet:
 
         st.markdown("#### 信用卡分期總覽")
         active_inst, future_inst_map = analyze_installments(df, current_month_str)
+        total_rem_debt = sum(x["remain_amt"] for x in active_inst)
         if active_inst:
-            total_rem_debt = sum(x["remain_amt"] for x in active_inst)
             next_m_str = add_months(TODAY, 1).strftime("%Y-%m")
             next_m_amt = future_inst_map.get(next_m_str, 0.0)
             ic1, ic2 = st.columns(2)
@@ -1727,20 +2085,24 @@ if sh and worksheet:
 
         st.markdown("#### 儲蓄目標")
         goal = cfg_num(CFG_GOAL, 0)
-        all_inc, all_exp = sums(df)
-        all_net = all_inc - all_exp
+        today_iso = TODAY.strftime("%Y-%m-%d")
+        df_to_date = df[df["日期_std"].fillna("") <= today_iso] if not df.empty else df
+        realized_inc, realized_exp = sums(df_to_date)
+        realized_net = realized_inc - realized_exp
         if goal and goal > 0:
-            g_ratio = all_net / goal
+            g_ratio = realized_net / goal
             st.progress(
                 float(min(max(g_ratio, 0.0), 1.0)),
-                text=f"{max(g_ratio, 0):.0%}（累計結餘 ${all_net:,.0f} / 目標 ${goal:,.0f}）",
+                text=f"{max(g_ratio, 0):.0%}（截至今日累計結餘 ${realized_net:,.0f} / 目標 ${goal:,.0f}）",
             )
-            if all_net >= goal:
+            if realized_net >= goal:
                 st.success("已達成儲蓄目標！")
             else:
-                st.caption(f"還差 ${goal - all_net:,.0f}")
+                st.caption(f"還差 ${goal - realized_net:,.0f}")
+            if total_rem_debt > 0:
+                st.caption(f"若扣除尚未到期的信用卡分期（${total_rem_debt:,.0f}），淨結餘為 ${realized_net - total_rem_debt:,.0f}。")
         else:
-            st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算設定」設定。")
+            st.caption(f"尚未設定儲蓄目標，可到「{MODE_ADD}」→「預算與設定」設定。")
 
     # ---------- 月曆 ----------
     elif view_mode == MODE_CAL:
