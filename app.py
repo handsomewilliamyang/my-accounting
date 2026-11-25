@@ -56,10 +56,13 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 .app-header h1 { font-size:1.5rem; font-weight:700; line-height:1.3; margin:0; padding:0; letter-spacing:.01em; }
 .app-header p { margin:.2rem 0 0; opacity:.55; font-size:.85rem; }
 .st-key-topbar div[data-testid="stHorizontalBlock"],
-.st-key-month_nav div[data-testid="stHorizontalBlock"] {
+.st-key-month_nav div[data-testid="stHorizontalBlock"],
+.st-key-csv_export_row div[data-testid="stHorizontalBlock"] {
   flex-direction:row !important; flex-wrap:nowrap !important; align-items:center; gap:8px;
 }
-.st-key-topbar div[data-testid="stColumn"], .st-key-month_nav div[data-testid="stColumn"] { min-width:0 !important; }
+.st-key-topbar div[data-testid="stColumn"],
+.st-key-month_nav div[data-testid="stColumn"],
+.st-key-csv_export_row div[data-testid="stColumn"] { min-width:0 !important; }
 
 /* ---------- 按鈕 ---------- */
 .stButton button, .stDownloadButton button {
@@ -196,11 +199,29 @@ div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(
 .cal-note { font-size:.75rem; opacity:.6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
 .cal-wd { text-align:center; font-weight:600; opacity:.65; font-size:.85rem; padding:4px 0; }
 
+/* ---------- 今日已記帳小清單 ---------- */
+.recent-box {
+  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:12px 14px; margin-top:12px; font-variant-numeric:tabular-nums;
+}
+.recent-head { font-size:.8rem; font-weight:600; opacity:.65; margin-bottom:6px; letter-spacing:.03em; }
+.recent-row {
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:6px 0; border-top:1px solid var(--line); font-size:.88rem;
+}
+.recent-l { display:flex; align-items:center; gap:8px; min-width:0; }
+.recent-l b { white-space:nowrap; }
+.recent-note { opacity:.6; font-size:.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.recent-r { font-weight:600; white-space:nowrap; }
+.recent-more { font-size:.78rem; opacity:.6; margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); }
+
 /* ---------- 登入頁 ---------- */
 div[data-testid="stHeading"] h1 { text-align:center; font-weight:700; margin-top:8vh; }
 
 @media (max-width:640px) {
-  .hero { padding:16px; border-radius:var(--r-md); }
+  div.block-container, div[data-testid="stMainBlockContainer"] { padding:3.25rem .85rem 3rem; }
+  .stTabs [data-baseweb="tab"] { padding:0 10px; font-size:.9rem; }
+  .hero { padding:16px; border-radius:var(--r-md); margin:12px 0 10px; }
   .hero-amount { font-size:1.9rem; }
   .hero-col .v { font-size:1.05rem; }
   .cal-grid { gap:4px; }
@@ -1148,85 +1169,112 @@ if sh and worksheet:
             for wkey, lkey in (("gen_type", "_last_type"), ("gen_cat", "_last_cat"), ("gen_pay", "_last_pay")):
                 if wkey not in st.session_state and lkey in st.session_state:
                     st.session_state[wkey] = st.session_state[lkey]
-            tx_type = st.radio("類型", ["支出", "收入"], horizontal=True, key="gen_type")
-            cat_options = EXPENSE_CATS if tx_type == "支出" else INCOME_CATS
-            if st.session_state.get("gen_cat") not in cat_options:
-                st.session_state.pop("gen_cat", None)
-            category = st.selectbox("分類", cat_options, key="gen_cat")
-            amount = st.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
-            pay_method = st.selectbox("付款方式", PAY_OPTIONS, key="gen_pay")
-            st.session_state.update(_last_type=tx_type, _last_cat=category, _last_pay=pay_method)
+            with st.container(border=True):
+                tx_type = st.radio("類型", ["支出", "收入"], horizontal=True, key="gen_type")
+                cat_options = EXPENSE_CATS if tx_type == "支出" else INCOME_CATS
+                if st.session_state.get("gen_cat") not in cat_options:
+                    st.session_state.pop("gen_cat", None)
 
-            installments = 1
-            if tx_type == "支出" and pay_method == "信用卡":
-                installments = st.number_input(
-                    "分期期數（1 = 不分期）",
-                    min_value=1, max_value=36, value=1, step=1,
-                    key=f"inst_{ver}",
-                )
+                c_cat, c_pay = st.columns(2)
+                category = c_cat.selectbox("分類", cat_options, key="gen_cat")
+                pay_method = c_pay.selectbox("付款方式", PAY_OPTIONS, key="gen_pay")
+                st.session_state.update(_last_type=tx_type, _last_cat=category, _last_pay=pay_method)
 
-            tx_date = st.date_input("日期（首期入帳日）" if installments > 1 else "日期", value=TODAY)
-            note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
-
-            clean_n = clean_note_text(note, amount or "")
-
-            if installments > 1 and amount is not None and amount > 0:
-                parts = split_installments(amount, installments)
-                end_date = add_months(tx_date, installments - 1)
-                st.info(
-                    f"分 **{installments} 期** 拆帳：首期 **${parts[0]:,}**"
-                    + (f"，其餘每期 **${parts[1]:,}**" if len(set(parts)) > 1 else f"，每期 **${parts[0]:,}**")
-                    + f"（{tx_date.strftime('%Y-%m')} ～ {end_date.strftime('%Y-%m')}）"
-                )
-
-            gen_dup = False
-            if installments == 1 and amount is not None and amount > 0 and not df.empty:
-                gen_dup = bool((
-                    (df["日期_std"] == str(tx_date)) & (df["類型"] == tx_type) & (df["分類"] == category)
-                    & (df["金額_num"] == float(amount)) & (df["備註"] == clean_n)
-                ).any())
-            allow_gen_dup = True
-            if gen_dup:
-                st.warning(f"{tx_date} 已有一筆完全相同的紀錄（分類、金額、備註都一樣）。")
-                allow_gen_dup = st.checkbox("我確定要再記一筆", key=f"allow_gen_dup_{ver}")
-
-            btn_text = f"送出分期記帳（共 {installments} 期）" if installments > 1 else "送出記帳"
-            if st.button(btn_text, type="primary", icon=":material/add:", **STRETCH):
-                if amount is not None and amount > 0 and not allow_gen_dup:
-                    st.warning("已有相同紀錄，請先勾選「我確定要再記一筆」。")
-                elif amount is not None and amount > 0:
-                    try:
-                        if installments > 1:
-                            parts = split_installments(amount, installments)
-                            base_label = clean_n or f"{category}分期"
-                            new_rows = [
-                                [
-                                    str(add_months(tx_date, i)),
-                                    tx_type,
-                                    category,
-                                    part_amt,
-                                    pay_method,
-                                    f"{base_label} ({i + 1}/{installments}期)",
-                                ]
-                                for i, part_amt in enumerate(parts)
-                            ]
-                            worksheet.append_rows(new_rows, value_input_option="RAW")
-                            clear_data_cache()
-                            flash_and_rerun(f"已建立 {installments} 期分期帳目（總額 ${int(amount):,}）！")
-                        else:
-                            worksheet.append_row(
-                                [str(tx_date), tx_type, category, amount, pay_method, clean_n],
-                                value_input_option="RAW",
-                            )
-                            clear_data_cache()
-                            flash_and_rerun("一般記帳新增成功！")
-                    except Exception as e:
-                        st.error(f"寫入失敗: {e}")
+                installments = 1
+                if tx_type == "支出" and pay_method == "信用卡":
+                    c_amt, c_date, c_inst = st.columns([2, 1.6, 1.4])
+                    amount = c_amt.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
+                    installments = c_inst.number_input(
+                        "分期（1=不分期）",
+                        min_value=1, max_value=36, value=1, step=1,
+                        key=f"inst_{ver}",
+                    )
+                    tx_date = c_date.date_input("首期日" if installments > 1 else "日期", value=TODAY)
                 else:
-                    st.warning("請輸入有效的金額！")
+                    c_amt, c_date = st.columns([1.4, 1])
+                    amount = c_amt.number_input("金額", value=None, step=1, min_value=0, placeholder="請輸入金額...", key=f"amt_{ver}")
+                    tx_date = c_date.date_input("日期", value=TODAY)
+
+                note = st.text_input("備註 (例如：鮮天下、加油)", key=f"note_{ver}")
+
+                clean_n = clean_note_text(note, amount or "")
+
+                if installments > 1 and amount is not None and amount > 0:
+                    parts = split_installments(amount, installments)
+                    end_date = add_months(tx_date, installments - 1)
+                    st.info(
+                        f"分 **{installments} 期** 拆帳：首期 **${parts[0]:,}**"
+                        + (f"，其餘每期 **${parts[1]:,}**" if len(set(parts)) > 1 else f"，每期 **${parts[0]:,}**")
+                        + f"（{tx_date.strftime('%Y-%m')} ～ {end_date.strftime('%Y-%m')}）"
+                    )
+
+                gen_dup = False
+                if installments == 1 and amount is not None and amount > 0 and not df.empty:
+                    gen_dup = bool((
+                        (df["日期_std"] == str(tx_date)) & (df["類型"] == tx_type) & (df["分類"] == category)
+                        & (df["金額_num"] == float(amount)) & (df["備註"] == clean_n)
+                    ).any())
+                allow_gen_dup = True
+                if gen_dup:
+                    st.warning(f"{tx_date} 已有一筆完全相同的紀錄（分類、金額、備註都一樣）。")
+                    allow_gen_dup = st.checkbox("我確定要再記一筆", key=f"allow_gen_dup_{ver}")
+
+                btn_text = f"送出分期記帳（共 {installments} 期）" if installments > 1 else "送出記帳"
+                if st.button(btn_text, type="primary", icon=":material/add:", **STRETCH):
+                    if amount is not None and amount > 0 and not allow_gen_dup:
+                        st.warning("已有相同紀錄，請先勾選「我確定要再記一筆」。")
+                    elif amount is not None and amount > 0:
+                        try:
+                            if installments > 1:
+                                parts = split_installments(amount, installments)
+                                base_label = clean_n or f"{category}分期"
+                                new_rows = [
+                                    [
+                                        str(add_months(tx_date, i)),
+                                        tx_type,
+                                        category,
+                                        part_amt,
+                                        pay_method,
+                                        f"{base_label} ({i + 1}/{installments}期)",
+                                    ]
+                                    for i, part_amt in enumerate(parts)
+                                ]
+                                worksheet.append_rows(new_rows, value_input_option="RAW")
+                                clear_data_cache()
+                                flash_and_rerun(f"已建立 {installments} 期分期帳目（總額 ${int(amount):,}）！")
+                            else:
+                                worksheet.append_row(
+                                    [str(tx_date), tx_type, category, amount, pay_method, clean_n],
+                                    value_input_option="RAW",
+                                )
+                                clear_data_cache()
+                                flash_and_rerun("一般記帳新增成功！")
+                        except Exception as e:
+                            st.error(f"寫入失敗: {e}")
+                    else:
+                        st.warning("請輸入有效的金額！")
 
         with tab_general:
             add_entry_form()
+            if not df.empty:
+                today_iso = TODAY.strftime("%Y-%m-%d")
+                df_today = df[df["日期_std"] == today_iso].sort_values("_row", ascending=False)
+                if not df_today.empty:
+                    t_inc, t_exp = sums(df_today)
+                    items_html = "".join(
+                        f"<div class='recent-row'>"
+                        f"<span class='recent-l'><b>{html.escape(str(r['分類']))}</b>"
+                        f"<span class='recent-note'>{html.escape(str(r['備註']))}</span></span>"
+                        f"<span class='recent-r {'pos' if r['類型'] == '收入' else ''}'>"
+                        f"{'+' if r['類型'] == '收入' else '-'}${r['金額_num']:,.0f}</span>"
+                        f"</div>"
+                        for _, r in df_today.head(5).iterrows()
+                    )
+                    more_txt = f"<div class='recent-more'>今天共 {len(df_today)} 筆（支出 ${t_exp:,.0f}" + (f" · 收入 ${t_inc:,.0f}" if t_inc > 0 else "") + "）</div>"
+                    st.markdown(
+                        f"<div class='recent-box'><div class='recent-head'>今日已記帳</div>{items_html}{more_txt}</div>",
+                        unsafe_allow_html=True,
+                    )
 
         with tab_salary:
             with st.container(border=True):
@@ -1489,7 +1537,18 @@ if sh and worksheet:
 
     # ---------- 記帳明細 ----------
     elif view_mode == MODE_LIST:
-        st.subheader(f"{selected_month} 記帳明細")
+        search_all = st.toggle("搜尋全部月份（跨月統計）", value=False, key="list_search_all")
+        if search_all:
+            base_df = (
+                df.sort_values(["日期_std", "_row"], ascending=False).reset_index(drop=True)
+                if not df.empty else df_selected
+            )
+            scope_label = "全部月份"
+        else:
+            base_df = df_selected
+            scope_label = selected_month
+
+        st.subheader(f"{scope_label} 記帳明細")
 
         if not df.empty:
             dirty_df = df[df["_raw_note"] != df["備註"]]
@@ -1511,18 +1570,6 @@ if sh and worksheet:
                             flash_and_rerun(f"已永久更新試算表中的 {len(updates)} 筆備註！")
                     except Exception as e:
                         st.error(f"更新失敗：{e}")
-
-        search_all = st.toggle("搜尋全部月份（跨月統計）", value=False, key="list_search_all")
-
-        if search_all:
-            base_df = (
-                df.sort_values(["日期_std", "_row"], ascending=False).reset_index(drop=True)
-                if not df.empty else df_selected
-            )
-            scope_label = "全部月份"
-        else:
-            base_df = df_selected
-            scope_label = selected_month
 
         if not base_df.empty:
             uncat_df = base_df[(base_df["類型"] == "支出") & (base_df["分類"] == "其他支出")]
@@ -1656,14 +1703,6 @@ if sh and worksheet:
                         m_agg[col_t] = m_agg[col_t].map(money)
                     st.dataframe(m_agg[["年月", "支出", "收入", "淨額"]], hide_index=True, **STRETCH)
 
-            st.download_button(
-                "匯出篩選結果 CSV" if search_all else "匯出本月 CSV",
-                view[FIELDS].to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"記帳_篩選_{TODAY.strftime('%Y%m%d')}.csv" if search_all else f"記帳_{selected_month}.csv",
-                mime="text/csv",
-                icon=":material/download:",
-            )
-
             filter_sig = f"{int(search_all)}__{range_opt}__{'|'.join(cat_filter)}__{'|'.join(pay_filter)}__{kw.strip()}"
 
             def render_tx_editor(sub_df, tx_kind, key_suffix):
@@ -1749,16 +1788,30 @@ if sh and worksheet:
             render_tx_editor(view[view["類型"] == "支出"], "支出", "exp")
             render_tx_editor(view[view["類型"] == "收入"], "收入", "inc")
         else:
+            view = pd.DataFrame(columns=DF_COLS)
             st.info(f"所選範圍（{scope_label}）目前還沒有任何記錄！")
 
         st.divider()
-        st.download_button(
-            "下載全部記帳資料（CSV）",
-            df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
-            file_name="記帳_全部資料.csv",
-            mime="text/csv",
-            icon=":material/download:",
-        )
+        with st.container(key="csv_export_row"):
+            dl1, dl2 = st.columns(2)
+            dl1.download_button(
+                "匯出篩選結果 CSV" if search_all else "匯出本月 CSV",
+                view[FIELDS].to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"記帳_篩選_{TODAY.strftime('%Y%m%d')}.csv" if search_all else f"記帳_{selected_month}.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                disabled=view.empty,
+                **STRETCH,
+            )
+            dl2.download_button(
+                "下載全部記帳資料（CSV）",
+                df[FIELDS].to_csv(index=False).encode("utf-8-sig"),
+                file_name="記帳_全部資料.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                disabled=df.empty,
+                **STRETCH,
+            )
 
     # ---------- 圖表分析（整合月度與年度） ----------
     elif view_mode == MODE_CHART:
