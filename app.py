@@ -71,7 +71,7 @@ CSS = """
   color:var(--ink) !important;
 }
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
-.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp span {
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {
   font-family:"PingFang TC","Hiragino Maru Gothic ProN","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
@@ -1251,19 +1251,19 @@ if sh and worksheet:
 
     with st.container(key="month_nav"):
         if is_not_current:
-            nav1, nav2, nav3, nav4 = st.columns([1, 2.4, 1, 1.2])
+            nav1, nav2, nav3, nav4 = st.columns([1.35, 2.0, 1.35, 1.1])
         else:
-            nav1, nav2, nav3 = st.columns([1, 3, 1])
+            nav1, nav2, nav3 = st.columns([1.3, 2.4, 1.3])
             nav4 = None
         nav1.button(
-            "", icon=":material/chevron_left:", help="上個月", key="btn_prev",
+            "Last month", help="上個月", key="btn_prev",
             on_click=shift_month, args=(-1,),
             disabled=(cur_m_idx >= len(all_months) - 1),
             **STRETCH,
         )
         nav2.selectbox("月份", all_months, key="month_sel", label_visibility="collapsed")
         nav3.button(
-            "", icon=":material/chevron_right:", help="下個月", key="btn_next",
+            "Next month", help="下個月", key="btn_next",
             on_click=shift_month, args=(1,),
             disabled=(cur_m_idx <= 0),
             **STRETCH,
