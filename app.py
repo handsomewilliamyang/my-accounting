@@ -1292,7 +1292,7 @@ if sh and worksheet:
     render_budget_banner(df_selected, total_expense, budgets, selected_month)
     n_pend = len(pending_fixed(df, fixed_templates, TODAY))
     if n_pend:
-        st.info(f"有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「{MODE_ADD}」→「固定」補登。")
+        st.info(f"有 {n_pend} 筆固定支出已到扣款日、尚未記錄，請到「{MODE_ADD}」→「薪資與固定」補登。")
 
     MODES = [MODE_ADD, MODE_LIST, MODE_CHART, MODE_BUDGET, MODE_CAL]
     if st.session_state.get("view_mode") not in MODES:
@@ -1309,8 +1309,8 @@ if sh and worksheet:
 
     # ---------- 記帳與設定 ----------
     if view_mode == MODE_ADD:
-        tab_general, tab_salary, tab_fixed, tab_settings = st.tabs(
-            ["記一筆", "薪資", "固定", "預算與設定"]
+        tab_general, tab_recurring, tab_settings = st.tabs(
+            ["記一筆", "薪資與固定", "預算與設定"]
         )
 
         @st.fragment
@@ -1426,41 +1426,7 @@ if sh and worksheet:
                         unsafe_allow_html=True,
                     )
 
-        with tab_salary:
-            with st.container(border=True):
-                default_salary = st.number_input(
-                    "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
-                )
-                if config_ws and st.button("記住為預設月薪"):
-                    try:
-                        save_config(CFG_SALARY, default_salary)
-                        bump_editor()
-                        flash_and_rerun("已更新預設月薪！")
-                    except Exception as e:
-                        st.error(f"儲存失敗: {e}")
-                salary_date = st.date_input("入帳日期", value=TODAY, key="sal_date")
-
-                salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
-                allow_salary_dup = True
-                if salary_dup:
-                    st.warning(f"{salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
-                    allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
-
-                if st.button("入帳本月薪資", type="primary", **STRETCH):
-                    if not allow_salary_dup:
-                        st.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
-                    else:
-                        try:
-                            worksheet.append_row(
-                                [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
-                                value_input_option="RAW",
-                            )
-                            clear_data_cache()
-                            flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
-                        except Exception as e:
-                            st.error(f"薪資入帳失敗: {e}")
-
-        with tab_fixed:
+        with tab_recurring:
             pend = pending_fixed(df, fixed_templates, TODAY)
             if pend:
                 lines = "\n".join(
@@ -1482,7 +1448,45 @@ if sh and worksheet:
                         st.error(f"補登失敗: {e}")
 
             with st.container(border=True):
-                st.markdown("**手動扣款**")
+                st.markdown("**💼 每月薪資入帳**")
+                s_col1, s_col2 = st.columns([1.4, 1])
+                default_salary = s_col1.number_input(
+                    "預設月薪金額", value=int(cfg_num(CFG_SALARY, 45000)), step=1000, key=f"salary_amt_{ver}"
+                )
+                salary_date = s_col2.date_input("入帳日期", value=TODAY, key="sal_date")
+
+                salary_dup = already_recorded(df, salary_date.strftime("%Y-%m"), "薪資")
+                allow_salary_dup = True
+                if salary_dup:
+                    st.warning(f"{salary_date.strftime('%Y-%m')} 已經有薪資紀錄了。")
+                    allow_salary_dup = st.checkbox("我確定要再入帳一次", key=f"allow_sal_dup_{ver}")
+
+                sb1, sb2 = st.columns(2)
+                with sb1:
+                    if st.button("入帳本月薪資", type="primary", **STRETCH):
+                        if not allow_salary_dup:
+                            st.warning("本月已有薪資紀錄，請先勾選「我確定要再入帳一次」。")
+                        else:
+                            try:
+                                worksheet.append_row(
+                                    [str(salary_date), "收入", "薪資", default_salary, "現金", "每月固定薪資"],
+                                    value_input_option="RAW",
+                                )
+                                clear_data_cache()
+                                flash_and_rerun(f"成功入帳薪資 ${default_salary:,}！")
+                            except Exception as e:
+                                st.error(f"薪資入帳失敗: {e}")
+                with sb2:
+                    if config_ws and st.button("記住為預設月薪", **STRETCH):
+                        try:
+                            save_config(CFG_SALARY, default_salary)
+                            bump_editor()
+                            flash_and_rerun("已更新預設月薪！")
+                        except Exception as e:
+                            st.error(f"儲存失敗: {e}")
+
+            with st.container(border=True):
+                st.markdown("**📌 每月固定支出**")
                 if fixed_templates:
                     selected_template = st.selectbox("選擇常用固定支出範本", list(fixed_templates.keys()))
                     default_val = fixed_templates[selected_template]
@@ -1490,11 +1494,14 @@ if sh and worksheet:
                     selected_template = "無範本"
                     default_val = {"amount": 0, "pay": "現金"}
 
-                expense_note = st.text_input("支出項目名稱", value=selected_template)
-                default_expense = st.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
+                fe1, fe2 = st.columns(2)
+                expense_note = fe1.text_input("支出項目名稱", value=selected_template)
+                default_expense = fe2.number_input("預設支出金額", value=int(default_val["amount"]), step=100)
+
+                fe3, fe4 = st.columns(2)
                 default_pay_idx = PAY_OPTIONS.index(default_val["pay"]) if default_val["pay"] in PAY_OPTIONS else 0
-                expense_pay = st.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
-                expense_date = st.date_input("扣款日期", value=TODAY, key="exp_date")
+                expense_pay = fe3.selectbox("付款方式", PAY_OPTIONS, index=default_pay_idx, key="exp_pay")
+                expense_date = fe4.date_input("扣款日期", value=TODAY, key="exp_date")
 
                 fixed_dup = already_recorded(df, expense_date.strftime("%Y-%m"), "每月固定費用", expense_note)
                 allow_fixed_dup = True
