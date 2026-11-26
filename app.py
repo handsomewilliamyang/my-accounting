@@ -7,54 +7,95 @@ import gspread
 import pandas as pd
 import streamlit as st
 
-# ======================= 視覺主題 =======================
-ACCENT = "#6FA3D8"
-INCOME_COLOR = "#3FAF86"
-EXPENSE_COLOR = "#E0675F"
-WARN_COLOR = "#E0A030"
-PALETTE = [ACCENT, INCOME_COLOR, "#D9A441", EXPENSE_COLOR, "#B48EAD", "#7BAE9A", "#66B2B2", "#8A94A6"]
+# ======================= 視覺主題：馬卡龍療癒積木風（Soft Pastel Bento） =======================
+ACCENT = "#FF7A59"
+INCOME_COLOR = "#18865B"
+EXPENSE_COLOR = "#D94E34"
+WARN_COLOR = "#D99316"
+PALETTE = [
+    "#FF8A65", "#4DB6AC", "#FFD54F", "#F06292",
+    "#64B5F6", "#81C784", "#BA68C8", "#A1887F",
+]
 CAT_COLORS = {
-    "伙食": "#5B8FB9", "飲料": "#7FA9C9", "交通": "#7BAE9A", "日用": "#8FB996",
-    "購物": "#B48EAD", "娛樂": "#D4A76A", "居家": "#C98A72", "醫療": "#66B2B2",
-    "學習": "#6E85B7", "社交": "#D1889E", "保險": "#7C90A0",
-    "其他支出": "#A9B8C9", "每月固定費用": "#8A94A6",
+    "伙食": "#FF8A65", "飲料": "#64B5F6", "交通": "#4DB6AC", "日用": "#81C784",
+    "購物": "#F06292", "娛樂": "#FFD54F", "居家": "#BA68C8", "醫療": "#4DD0E1",
+    "學習": "#7986CB", "社交": "#FF8A80", "保險": "#A1887F",
+    "其他支出": "#B0BEC5", "每月固定費用": "#90A4AE",
 }
+CAT_BADGES = {
+    "伙食": ("🍱", "#FFE5D9"), "飲料": ("🧋", "#E2F0FF"), "交通": ("🚇", "#D9F4E8"),
+    "日用": ("🧴", "#E8F5E9"), "購物": ("🛍️", "#FCE4EC"), "娛樂": ("🎬", "#FFF2C6"),
+    "居家": ("🏠", "#F3E5F5"), "醫療": ("💊", "#E0F7FA"), "學習": ("📚", "#E8EAF6"),
+    "社交": ("🎁", "#FFEBEE"), "保險": ("🛡️", "#EFEBE9"), "每月固定費用": ("📌", "#ECEFF1"),
+    "其他支出": ("🧾", "#F5EFEA"), "總預算": ("🎯", "#FFE5D9"),
+    "薪資": ("💼", "#D9F4E8"), "獎金": ("🎉", "#FFF2C6"), "投資": ("📈", "#E2F0FF"),
+    "副業": ("✨", "#F3E5F5"), "回饋": ("💎", "#D9F4E8"), "其他收入": ("🪙", "#FFF2C6"),
+}
+
+
+def cat_badge_html(name, fallback_icon="🏷️", fallback_bg="#F5EFEA"):
+    icon, bg = CAT_BADGES.get(str(name).strip(), (fallback_icon, fallback_bg))
+    return f"<span class='cat-badge' style='background:{bg};'>{icon}</span>"
+
 
 CSS = """
 <style>
 :root {
-  --primary:#6FA3D8; --primary-soft:rgba(111,163,216,.16);
-  --primary-strong:#33619B;
-  --income:#3FAF86;  --income-soft:rgba(63,175,134,.14);
-  --expense:#E0675F; --expense-soft:rgba(224,103,95,.14);
-  --warning:#E0A030;
-  --line:rgba(128,128,128,.22);
-  --card:rgba(128,128,128,.08);
-  --card-hover:rgba(128,128,128,.13);
-  --track:rgba(128,128,128,.22);
-  --r-sm:10px; --r-md:14px; --r-lg:20px;
-  --shadow-card:0 1px 2px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.05);
-  --shadow-lift:0 6px 20px rgba(0,0,0,.22);
+  --bg:#FFF9F5;
+  --ink:#2D2A32;
+  --ink-muted:#7E747B;
+  --primary:#FF7A59;
+  --primary-hover:#F26745;
+  --primary-soft:rgba(255,122,89,.18);
+  --income:#18865B;
+  --income-soft:#D9F4E8;
+  --expense:#D94E34;
+  --expense-soft:#FFE5D9;
+  --warning:#C78008;
+  --warning-soft:#FFF2C6;
+  --sky-soft:#E2F0FF;
+  --sky-ink:#1D528F;
+  --line:#EFE4DC;
+  --card:#FFFFFF;
+  --card-hover:#FFFDFB;
+  --track:#F3EAE3;
+  --r-sm:14px; --r-md:20px; --r-lg:26px;
+  --shadow-card:0 6px 22px rgba(176,140,122,.12);
+  --shadow-lift:0 10px 26px rgba(176,140,122,.18);
   --ease:cubic-bezier(.2,.7,.2,1);
 }
 
+/* 全域奶油白畫布與深可可文字 */
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+  background-color:var(--bg) !important;
+  color:var(--ink) !important;
+}
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
-.stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-  font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp span {
+  font-family:"PingFang TC","Hiragino Maru Gothic ProN","Microsoft JhengHei","Noto Sans TC",system-ui,-apple-system,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
 footer { display:none; }
 div.block-container, div[data-testid="stMainBlockContainer"] {
-  max-width:1080px; padding:4.5rem 1rem 4rem;
+  max-width:1080px; padding:4rem 1rem 4rem;
 }
-.stApp h3 { font-size:1.125rem; font-weight:600; letter-spacing:.01em; margin-top:.5rem; }
-.stApp h4 { font-size:.9rem; font-weight:600; opacity:.7; letter-spacing:.04em; }
-.stApp hr { border-color:var(--line) !important; margin:1.5rem 0; }
-.stApp [data-testid="stCaptionContainer"] { opacity:.65; }
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 { color:var(--ink) !important; }
+.stApp h3 { font-size:1.15rem; font-weight:700; letter-spacing:.01em; margin-top:.6rem; }
+.stApp h4 { font-size:.92rem; font-weight:700; color:var(--ink-muted) !important; letter-spacing:.03em; }
+.stApp hr { border-color:var(--line) !important; margin:1.4rem 0; }
+.stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stCaptionContainer"] p {
+  color:var(--ink-muted) !important; opacity:1;
+}
 
 /* ---------- 標題 ---------- */
-.app-header h1 { font-size:1.5rem; font-weight:700; line-height:1.3; margin:0; padding:0; letter-spacing:.01em; }
-.app-header p { margin:.2rem 0 0; opacity:.55; font-size:.85rem; }
+.app-header { display:flex; align-items:center; gap:12px; }
+.app-logo {
+  width:46px; height:46px; border-radius:999px; background:var(--expense-soft);
+  display:flex; align-items:center; justify-content:center; font-size:1.45rem;
+  box-shadow:0 4px 12px rgba(255,122,89,.16); flex-shrink:0;
+}
+.app-header h1 { font-size:1.45rem; font-weight:800; line-height:1.25; margin:0; padding:0; color:var(--ink) !important; }
+.app-header p { margin:.18rem 0 0; color:var(--ink-muted) !important; font-size:.84rem; }
 .st-key-topbar div[data-testid="stHorizontalBlock"],
 .st-key-month_nav div[data-testid="stHorizontalBlock"],
 .st-key-csv_export_row div[data-testid="stHorizontalBlock"] {
@@ -66,176 +107,249 @@ div.block-container, div[data-testid="stMainBlockContainer"] {
 
 /* ---------- 按鈕 ---------- */
 .stButton button, .stDownloadButton button {
-  min-height:44px; font-weight:500; border-radius:var(--r-md);
-  border:1px solid var(--line);
-  transition:transform .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease);
+  min-height:44px; font-weight:600; border-radius:999px;
+  background:var(--card) !important; color:var(--ink) !important;
+  border:1.5px solid var(--line) !important;
+  box-shadow:0 3px 10px rgba(176,140,122,.08);
+  transition:transform .16s var(--ease), box-shadow .16s var(--ease), background .16s var(--ease), border-color .16s var(--ease);
 }
+.stButton button p, .stDownloadButton button p { color:var(--ink) !important; }
 .stButton button:hover, .stDownloadButton button:hover {
-  border-color:var(--primary); transform:translateY(-1px); box-shadow:var(--shadow-lift);
+  border-color:var(--primary) !important; transform:translateY(-1px); box-shadow:var(--shadow-lift);
 }
 .stButton button:active, .stDownloadButton button:active { transform:translateY(0) scale(.98); box-shadow:none; }
 .stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"] {
-  background:linear-gradient(135deg,#4177BA 0%,#33619B 100%) !important;
-  border:none !important; color:#fff !important; font-weight:600;
-  box-shadow:0 2px 10px rgba(51,97,155,.40);
+  background:linear-gradient(135deg,#FF8666 0%,#FF6B4A 100%) !important;
+  border:none !important; color:#fff !important; font-weight:700;
+  box-shadow:0 6px 16px rgba(255,107,74,.32) !important;
 }
-.stButton button[kind="primary"] p, .stButton button[data-testid="stBaseButton-primary"] p { color:#fff !important; }
+.stButton button[kind="primary"] p, .stButton button[data-testid="stBaseButton-primary"] p,
+.stButton button[kind="primary"] span, .stButton button[data-testid="stBaseButton-primary"] span {
+  color:#fff !important;
+}
 .stButton button[kind="primary"]:hover, .stButton button[data-testid="stBaseButton-primary"]:hover {
-  filter:brightness(1.1); box-shadow:0 6px 18px rgba(51,97,155,.50);
+  filter:brightness(1.05); box-shadow:0 8px 22px rgba(255,107,74,.42) !important;
 }
 .stButton button:focus-visible, .stDownloadButton button:focus-visible {
   outline:2px solid var(--primary); outline-offset:2px;
 }
 .st-key-btn_delete button,
 .st-key-btn_delete_exp button,
-.st-key-btn_delete_inc button { color:var(--expense) !important; border-color:var(--expense) !important; }
+.st-key-btn_delete_inc button {
+  color:var(--expense) !important; border-color:#F5B7A8 !important; background:#FFF6F3 !important;
+}
+.st-key-btn_delete button p,
+.st-key-btn_delete_exp button p,
+.st-key-btn_delete_inc button p { color:var(--expense) !important; }
 .st-key-btn_delete button:hover,
 .st-key-btn_delete_exp button:hover,
 .st-key-btn_delete_inc button:hover { background:var(--expense-soft) !important; }
 
-/* ---------- 表單元件 ---------- */
+/* ---------- 表單與卡片容器 ---------- */
 .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {
   border-radius:var(--r-sm) !important;
+  background:#FFFBF8 !important; color:var(--ink) !important;
 }
 div[data-baseweb="input"], div[data-baseweb="select"] > div, div[data-baseweb="base-input"] {
   border-radius:var(--r-sm) !important;
+  background:#FFFBF8 !important; border-color:var(--line) !important;
 }
+div[data-baseweb="select"] span, div[data-baseweb="select"] div { color:var(--ink) !important; }
 div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {
-  box-shadow:0 0 0 2px var(--primary-soft) !important;
+  border-color:var(--primary) !important;
+  box-shadow:0 0 0 3px var(--primary-soft) !important;
 }
-.stApp label p { font-size:.85rem; font-weight:500; opacity:.8; }
-div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:var(--r-md) !important; }
+.stApp label p { font-size:.85rem; font-weight:600; color:var(--ink-muted) !important; }
+div[data-testid="stVerticalBlockBorderWrapper"] {
+  border-radius:var(--r-lg) !important;
+  background:var(--card) !important;
+  border:1.5px solid var(--line) !important;
+  box-shadow:var(--shadow-card) !important;
+}
 
 /* ---------- 分頁籤 ---------- */
-.stTabs [data-baseweb="tab-list"] { gap:4px; border-bottom:1px solid var(--line); }
-.stTabs [data-baseweb="tab"] { height:44px; padding:0 14px; border-radius:var(--r-sm) var(--r-sm) 0 0; font-weight:500; }
-.stTabs [aria-selected="true"] { font-weight:600; }
-.stTabs [data-baseweb="tab-highlight"] { background:var(--primary) !important; height:3px; border-radius:3px; }
+.stTabs [data-baseweb="tab-list"] { gap:6px; border-bottom:1.5px solid var(--line); }
+.stTabs [data-baseweb="tab"] {
+  height:42px; padding:0 14px; border-radius:14px 14px 0 0;
+  font-weight:600; color:var(--ink-muted) !important;
+}
+.stTabs [aria-selected="true"] { color:var(--primary) !important; font-weight:700; }
+.stTabs [data-baseweb="tab-highlight"] { background:var(--primary) !important; height:3.5px; border-radius:999px; }
+
+/* ---------- 主導覽（馬卡龍膠囊列） ---------- */
+.st-key-view_mode { margin:10px 0 20px; }
+.st-key-view_mode button {
+  min-height:44px; font-weight:600; border-radius:999px !important;
+  background:var(--card) !important; color:var(--ink-muted) !important;
+  border:1.5px solid var(--line) !important;
+}
+.st-key-view_mode button[aria-pressed="true"],
+.st-key-view_mode button[kind="segmented_controlActive"] {
+  background:var(--primary) !important; color:#fff !important;
+  border-color:var(--primary) !important;
+  box-shadow:0 4px 14px rgba(255,122,89,.32) !important;
+}
+.st-key-view_mode button[aria-pressed="true"] p,
+.st-key-view_mode button[kind="segmented_controlActive"] p { color:#fff !important; }
 
 /* ---------- 內建 metric 卡 ---------- */
 div[data-testid="stMetric"] {
-  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:12px 14px; font-variant-numeric:tabular-nums;
+  background:var(--card); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:14px 16px; box-shadow:var(--shadow-card); font-variant-numeric:tabular-nums;
 }
-div[data-testid="stMetricLabel"] p { font-size:.8rem; opacity:.65; }
-div[data-testid="stMetricValue"] { font-weight:600; font-variant-numeric:tabular-nums; }
+div[data-testid="stMetricLabel"] p { font-size:.8rem; color:var(--ink-muted) !important; }
+div[data-testid="stMetricValue"] { font-weight:700; color:var(--ink) !important; font-variant-numeric:tabular-nums; }
 
 /* ---------- 提示框、進度條、表格 ---------- */
-div[data-testid="stAlert"] { border-radius:var(--r-md); border:1px solid var(--line); }
-div[data-testid="stProgress"] > div > div { border-radius:999px; }
+div[data-testid="stAlert"] { border-radius:var(--r-md); border:1.5px solid var(--line); }
+div[data-testid="stProgress"] > div > div { border-radius:999px; background:var(--primary) !important; }
 div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
-  border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden;
+  border:1.5px solid var(--line); border-radius:var(--r-md); overflow:hidden;
+  box-shadow:var(--shadow-card);
 }
-div[data-testid="stExpander"] { border-radius:var(--r-md); border:1px solid var(--line); }
+div[data-testid="stExpander"] {
+  border-radius:var(--r-md); border:1.5px solid var(--line);
+  background:var(--card); box-shadow:0 3px 12px rgba(176,140,122,.07);
+}
 
-/* ---------- 總覽卡（Hero） ---------- */
-.hero {
-  background:
-    radial-gradient(120% 140% at 0% 0%, rgba(111,163,216,.22) 0%, rgba(111,163,216,0) 60%),
-    var(--card);
-  border:1px solid var(--line); border-radius:var(--r-lg);
-  padding:20px 22px; margin:16px 0 12px; box-shadow:var(--shadow-card);
-  font-variant-numeric:tabular-nums;
+/* ---------- Bento 拼圖總覽卡 ---------- */
+.bento-hero {
+  display:grid; grid-template-columns:1.35fr 1fr; gap:12px;
+  margin:14px 0 12px; font-variant-numeric:tabular-nums;
 }
-.hero-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-.hero-label { opacity:.6; font-size:.8rem; letter-spacing:.04em; }
-.hero-amount { font-size:2.25rem; font-weight:700; line-height:1.15; margin:4px 0 8px; letter-spacing:-.01em; }
-.hero-delta { font-size:.8rem; }
-.hero-delta .mut { opacity:.6; margin-right:4px; }
-.hero-row { display:flex; gap:12px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
-.hero-col { flex:1; min-width:0; }
-.hero-col .v { font-size:1.2rem; font-weight:600; margin:2px 0 4px; }
+.bento-main {
+  background:var(--income-soft); color:#164E3B;
+  border-radius:var(--r-lg); padding:20px 22px;
+  display:flex; flex-direction:column; justify-content:space-between; gap:12px;
+  box-shadow:0 6px 20px rgba(24,134,91,.10);
+}
+.bento-main.is-neg {
+  background:#FFDCD4; color:#7A2315;
+  box-shadow:0 6px 20px rgba(217,78,52,.12);
+}
+.bento-main-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.bento-label { font-size:.82rem; font-weight:600; opacity:.78; }
+.bento-net { font-size:2.35rem; font-weight:800; line-height:1.12; margin:4px 0 2px; letter-spacing:-.02em; }
+.bento-side { display:flex; flex-direction:column; gap:12px; }
+.bento-inc {
+  background:var(--warning-soft); color:#6B4A06;
+  border-radius:22px; padding:14px 18px; flex:1;
+  display:flex; flex-direction:column; justify-content:center;
+}
+.bento-exp {
+  background:var(--expense-soft); color:#7A2E1B;
+  border-radius:22px; padding:14px 18px; flex:1;
+  display:flex; flex-direction:column; justify-content:center;
+}
+.bento-sub-v { font-size:1.35rem; font-weight:800; line-height:1.2; margin:2px 0 4px; }
+.bento-delta { font-size:.78rem; font-weight:600; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.bento-delta .mut { opacity:.72; }
 .pos { color:var(--income); } .neg { color:var(--expense); }
-.pill { display:inline-block; padding:1px 8px; border-radius:999px; font-weight:600; font-size:.78rem; }
-.pill.pos { background:var(--income-soft); }
-.pill.neg { background:var(--expense-soft); }
-.pill.zero { background:var(--card); color:inherit; opacity:.7; }
-.pill.rate { opacity:1; font-weight:600; white-space:nowrap; }
+.pill { display:inline-block; padding:2px 9px; border-radius:999px; font-weight:700; font-size:.76rem; }
+.pill.pos { background:rgba(24,134,91,.14); color:#146C49; }
+.pill.neg { background:rgba(217,78,52,.15); color:#B53A24; }
+.pill.zero { background:rgba(45,42,50,.08); color:inherit; opacity:.75; }
+
+/* ---------- 圓形分類徽章 ---------- */
+.cat-badge {
+  width:34px; height:34px; border-radius:999px;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:1rem; flex-shrink:0;
+}
 
 /* ---------- 預算與分期進度卡 ---------- */
 .bud {
-  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:14px 16px; margin-bottom:10px; font-variant-numeric:tabular-nums;
-  transition:background .15s var(--ease), border-color .15s var(--ease);
+  background:var(--card); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:15px 18px; margin-bottom:12px; font-variant-numeric:tabular-nums;
+  box-shadow:var(--shadow-card);
+  transition:transform .16s var(--ease), box-shadow .16s var(--ease);
 }
-.bud:hover { background:var(--card-hover); border-color:rgba(128,128,128,.4); }
-.bud-top { display:flex; justify-content:space-between; gap:8px; font-size:.95rem; }
-.bud-sub { opacity:.6; font-size:.8rem; margin:2px 0 10px; }
-.bud-bar { height:8px; border-radius:999px; background:var(--track); overflow:hidden; }
+.bud:hover { transform:translateY(-1px); box-shadow:var(--shadow-lift); }
+.bud-top { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:.95rem; }
+.bud-title { display:flex; align-items:center; gap:10px; min-width:0; }
+.bud-sub { color:var(--ink-muted); font-size:.82rem; margin:6px 0 10px; }
+.bud-bar { height:10px; border-radius:999px; background:var(--track); overflow:hidden; }
 .bud-bar > i { display:block; height:100%; border-radius:999px; animation:grow .7s var(--ease) both; transform-origin:left; }
-.bud-ok > i   { background:linear-gradient(90deg,#3FAF86,#5CCBA3); }
-.bud-warn > i { background:linear-gradient(90deg,#E0A030,#F0BE5A); }
-.bud-over > i { background:linear-gradient(90deg,#E0675F,#F08A83); }
-.bud-inst > i { background:linear-gradient(90deg,#6FA3D8,#4177BA); }
-.t-ok { color:var(--income); font-weight:600; } .t-warn { color:var(--warning); font-weight:600; } .t-over { color:var(--expense); font-weight:700; }
-.t-inst { color:var(--primary); font-weight:600; }
+.bud-ok > i   { background:linear-gradient(90deg,#2AB57D,#18865B); }
+.bud-warn > i { background:linear-gradient(90deg,#FFBE42,#E59A14); }
+.bud-over > i { background:linear-gradient(90deg,#FF7A59,#D94E34); }
+.bud-inst > i { background:linear-gradient(90deg,#6BB1F8,#3B82F6); }
+.t-ok { background:var(--income-soft); color:#146C49; padding:2px 10px; border-radius:999px; font-weight:700; font-size:.8rem; }
+.t-warn { background:var(--warning-soft); color:#8A5A00; padding:2px 10px; border-radius:999px; font-weight:700; font-size:.8rem; }
+.t-over { background:var(--expense-soft); color:#B53A24; padding:2px 10px; border-radius:999px; font-weight:700; font-size:.8rem; }
+.t-inst { background:var(--sky-soft); color:var(--sky-ink); padding:2px 10px; border-radius:999px; font-weight:700; font-size:.8rem; white-space:nowrap; }
 @keyframes grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
-
-/* ---------- 主導覽 ---------- */
-.st-key-view_mode { margin:8px 0 20px; }
-.st-key-view_mode button { min-height:44px; font-weight:500; }
 
 /* ---------- 月曆 ---------- */
 .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; }
 .cal-card {
-  background:var(--card); border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--card); border:1.5px solid var(--line); border-radius:16px;
   padding:8px 10px; height:132px; overflow:hidden; margin-bottom:8px;
-  transition:background .15s var(--ease);
+  box-shadow:0 3px 10px rgba(176,140,122,.07);
+  transition:transform .15s var(--ease), box-shadow .15s var(--ease);
 }
 .cal-grid .cal-card { margin-bottom:0; }
-.cal-card:hover { background:var(--card-hover); }
-.cal-card.empty { opacity:.2; background:transparent; border-style:dashed; }
-.cal-card.today { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary), 0 0 14px var(--primary-soft); }
+.cal-card:hover { transform:translateY(-1px); box-shadow:var(--shadow-card); }
+.cal-card.empty { opacity:.35; background:transparent; border-style:dashed; box-shadow:none; }
+.cal-card.today {
+  border-color:var(--primary); background:#FFF6F2;
+  box-shadow:0 0 0 2px var(--primary-soft), var(--shadow-card);
+}
 .cal-day-header {
-  font-size:.8rem; font-weight:600; border-bottom:1px solid var(--line);
+  font-size:.8rem; font-weight:700; border-bottom:1px solid var(--line);
   padding-bottom:4px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;
 }
 .cal-card.today .cal-day-header > span:first-child {
-  background:var(--primary-strong); color:#fff; border-radius:999px; padding:0 7px; min-width:22px; text-align:center;
+  background:var(--primary); color:#fff; border-radius:999px; padding:0 8px; min-width:22px; text-align:center;
 }
-.cal-day-total { font-size:.75rem; font-weight:600; font-variant-numeric:tabular-nums; }
-.cal-amt { font-size:.8rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.cal-day-total { font-size:.75rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.cal-amt { font-size:.8rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .cal-item { margin-bottom:6px; }
-.cal-note { font-size:.75rem; opacity:.6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
-.cal-wd { text-align:center; font-weight:600; opacity:.65; font-size:.85rem; padding:4px 0; }
+.cal-note { font-size:.75rem; color:var(--ink-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+.cal-wd { text-align:center; font-weight:700; color:var(--ink-muted); font-size:.85rem; padding:4px 0; }
 
 /* ---------- 今日已記帳小清單 ---------- */
 .recent-box {
-  background:var(--card); border:1px solid var(--line); border-radius:var(--r-md);
-  padding:12px 14px; margin-top:12px; font-variant-numeric:tabular-nums;
+  background:var(--card); border:1.5px solid var(--line); border-radius:var(--r-lg);
+  padding:16px 18px; margin-top:14px; font-variant-numeric:tabular-nums;
+  box-shadow:var(--shadow-card);
 }
-.recent-head { font-size:.8rem; font-weight:600; opacity:.65; margin-bottom:6px; letter-spacing:.03em; }
+.recent-head { font-size:.82rem; font-weight:700; color:var(--ink-muted); margin-bottom:8px; letter-spacing:.03em; }
 .recent-row {
   display:flex; justify-content:space-between; align-items:center; gap:10px;
-  padding:6px 0; border-top:1px solid var(--line); font-size:.88rem;
+  padding:8px 0; border-top:1px solid var(--line); font-size:.9rem;
 }
-.recent-l { display:flex; align-items:center; gap:8px; min-width:0; }
-.recent-l b { white-space:nowrap; }
-.recent-note { opacity:.6; font-size:.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.recent-r { font-weight:600; white-space:nowrap; }
-.recent-more { font-size:.78rem; opacity:.6; margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); }
+.recent-l { display:flex; align-items:center; gap:10px; min-width:0; }
+.recent-txt { display:flex; flex-direction:column; min-width:0; line-height:1.3; }
+.recent-txt b { color:var(--ink); font-size:.9rem; }
+.recent-note { color:var(--ink-muted); font-size:.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.recent-r { font-weight:800; white-space:nowrap; font-size:.95rem; }
+.recent-more { font-size:.78rem; color:var(--ink-muted); margin-top:8px; padding-top:8px; border-top:1.5px dashed var(--line); }
 
 /* ---------- 登入頁 ---------- */
-div[data-testid="stHeading"] h1 { text-align:center; font-weight:700; margin-top:8vh; }
+div[data-testid="stHeading"] h1 { text-align:center; font-weight:800; margin-top:8vh; color:var(--ink) !important; }
 
 @media (max-width:640px) {
-  div.block-container, div[data-testid="stMainBlockContainer"] { padding:3.25rem .85rem 3rem; }
+  div.block-container, div[data-testid="stMainBlockContainer"] { padding:3.1rem .85rem 3rem; }
   .stTabs [data-baseweb="tab"] { padding:0 10px; font-size:.9rem; }
-  .hero { padding:16px; border-radius:var(--r-md); margin:12px 0 10px; }
-  .hero-amount { font-size:1.9rem; }
-  .hero-col .v { font-size:1.05rem; }
+  .bento-hero { grid-template-columns:1fr; gap:10px; }
+  .bento-side { flex-direction:row; gap:10px; }
+  .bento-main { padding:16px 18px; border-radius:22px; }
+  .bento-net { font-size:1.95rem; }
+  .bento-inc, .bento-exp { padding:12px 14px; border-radius:18px; }
+  .bento-sub-v { font-size:1.1rem; }
   .cal-grid { gap:4px; }
-  .cal-card { height:96px; padding:6px; }
+  .cal-card { height:96px; padding:6px; border-radius:12px; }
   .cal-amt, .cal-day-total, .cal-note { font-size:.65rem; }
 }
 
 @media (min-width:900px) {
   html { font-size:18px; }
-  div.block-container, div[data-testid="stMainBlockContainer"] { max-width:1180px; padding:4.5rem 1.5rem 4rem; }
+  div.block-container, div[data-testid="stMainBlockContainer"] { max-width:1180px; padding:4rem 1.5rem 4rem; }
   .cal-card { height:150px; }
-  .hero-label, .hero-delta, .bud-sub, .cal-day-total, .cal-note { font-size:.9rem; }
-  .app-header h1 { font-size:1.75rem; }
-  .hero-amount { font-size:2.6rem; }
+  .bento-label, .bento-delta, .bud-sub, .cal-day-total, .cal-note { font-size:.88rem; }
+  .app-header h1 { font-size:1.7rem; }
+  .bento-net { font-size:2.65rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition:none !important; animation:none !important; }
@@ -257,15 +371,15 @@ def theme_show(fig, stretch):
 
     has_y_label = y_title in ("金額", "總金額")
     fig.update_layout(
-        margin=dict(l=72 if has_y_label else 8, r=12, t=48, b=8),
-        title=dict(font=dict(size=15), x=0, xanchor="left"),
-        legend=dict(title_text="", orientation="h", y=-0.25, x=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12),
-        hoverlabel=dict(font_size=12),
+        margin=dict(l=72 if has_y_label else 10, r=14, t=50, b=10),
+        title=dict(font=dict(size=15, color="#2D2A32"), x=0, xanchor="left"),
+        legend=dict(title_text="", orientation="h", y=-0.25, x=0, font=dict(color="#5C535A")),
+        paper_bgcolor="rgba(255,255,255,0.88)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif", size=12, color="#2D2A32"),
+        hoverlabel=dict(font_size=12, bgcolor="#FFFFFF", bordercolor="#EFE4DC", font_color="#2D2A32"),
     )
-    fig.update_xaxes(title_text="", showgrid=False, linecolor="rgba(128,128,128,.3)")
-    fig.update_yaxes(title_text="", gridcolor="rgba(128,128,128,.15)", zeroline=False)
+    fig.update_xaxes(title_text="", showgrid=False, linecolor="#E6D8CE", tickfont=dict(color="#6D636A"))
+    fig.update_yaxes(title_text="", gridcolor="#F2E7DF", zeroline=False, tickfont=dict(color="#6D636A"))
 
     if has_y_label:
         fig.add_annotation(
@@ -276,10 +390,10 @@ def theme_show(fig, stretch):
             xshift=-48,
             textangle=0,
             showarrow=False,
-            font=dict(size=12, color="rgba(140,148,166,0.95)"),
+            font=dict(size=12, color="#7E747B"),
         )
 
-    st.plotly_chart(fig, theme="streamlit", **stretch)
+    st.plotly_chart(fig, theme=None, **stretch)
 
 
 def money(n):
@@ -294,25 +408,55 @@ def _delta(v, invert=False):
     return f"<span class='pill {'pos' if good else 'neg'}'>{sign}{abs(v):,.0f}</span>"
 
 
-def summary_card(period_label, income, expense, net, d_inc=None, d_exp=None, d_net=None, rate=None, sub_label="本月結餘", compare_label="較上月"):
-    cls = "pos" if net >= 0 else "neg"
-    rate_html = ""
-    if rate is not None:
-        rate_html = f"<span class='pill rate {'pos' if rate >= 0 else 'neg'}'>儲蓄率 {rate:.0%}</span>"
-    delta_top = f"<div class='hero-delta'><span class='mut'>{compare_label}</span> {_delta(d_net)}</div>" if d_net is not None else ""
-    delta_inc_html = f"<div class='hero-delta'>{_delta(d_inc)}</div>" if d_inc is not None else ""
-    delta_exp_html = f"<div class='hero-delta'>{_delta(d_exp, invert=True)}</div>" if d_exp is not None else ""
+def _saving_ring_svg(rate, is_neg=False):
+    pct = max(0.0, min(float(rate), 1.0))
+    circ = 2 * 3.14159 * 20
+    dash = pct * circ
+    track_col = "rgba(122,35,21,0.16)" if is_neg else "rgba(22,78,59,0.16)"
+    stroke_col = "#D94E34" if is_neg else "#18865B"
+    text_col = "#7A2315" if is_neg else "#164E3B"
+    label = f"{max(rate, 0):.0%}"
+    return (
+        f"<svg width='56' height='56' viewBox='0 0 52 52' style='flex-shrink:0;' aria-label='儲蓄率 {label}'>"
+        f"<circle cx='26' cy='26' r='20' fill='none' stroke='{track_col}' stroke-width='5.5'/>"
+        f"<circle cx='26' cy='26' r='20' fill='none' stroke='{stroke_col}' stroke-width='5.5' "
+        f"stroke-linecap='round' stroke-dasharray='{dash:.1f} {circ:.1f}' transform='rotate(-90 26 26)'/>"
+        f"<text x='26' y='30' text-anchor='middle' font-size='11' font-weight='800' fill='{text_col}'>{label}</text>"
+        f"</svg>"
+    )
+
+
+def summary_card(period_label, income, expense, net, d_inc=None, d_exp=None, d_net=None, rate=None, sub_label="本月存下", compare_label="較上月"):
+    is_neg = net < 0
+    ring_html = _saving_ring_svg(rate, is_neg=is_neg) if rate is not None else ""
+    delta_top = f"<div class='bento-delta'><span class='mut'>{compare_label}</span> {_delta(d_net)}</div>" if d_net is not None else ""
+    delta_inc_html = f"<div class='bento-delta'>{_delta(d_inc)}</div>" if d_inc is not None else ""
+    delta_exp_html = f"<div class='bento-delta'>{_delta(d_exp, invert=True)}</div>" if d_exp is not None else ""
     st.markdown(
-        f"<div class='hero'>"
-        f"<div class='hero-top'><div class='hero-label'>{period_label} {sub_label}</div>{rate_html}</div>"
-        f"<div class='hero-amount {cls}'>{money(net)}</div>"
-        f"{delta_top}"
-        f"<div class='hero-row'>"
-        f"<div class='hero-col'><div class='hero-label'>收入</div><div class='v'>{money(income)}</div>"
-        f"{delta_inc_html}</div>"
-        f"<div class='hero-col'><div class='hero-label'>支出</div><div class='v'>{money(expense)}</div>"
-        f"{delta_exp_html}</div>"
-        f"</div></div>",
+        f"<div class='bento-hero'>"
+        f"  <div class='bento-main{' is-neg' if is_neg else ''}'>"
+        f"    <div class='bento-main-top'>"
+        f"      <div>"
+        f"        <div class='bento-label'>{html.escape(str(period_label))} {html.escape(str(sub_label))}</div>"
+        f"        <div class='bento-net'>{money(net)}</div>"
+        f"      </div>"
+        f"      {ring_html}"
+        f"    </div>"
+        f"    {delta_top}"
+        f"  </div>"
+        f"  <div class='bento-side'>"
+        f"    <div class='bento-inc'>"
+        f"      <div class='bento-label'>總收入</div>"
+        f"      <div class='bento-sub-v'>{money(income)}</div>"
+        f"      {delta_inc_html}"
+        f"    </div>"
+        f"    <div class='bento-exp'>"
+        f"      <div class='bento-label'>總支出</div>"
+        f"      <div class='bento-sub-v'>{money(expense)}</div>"
+        f"      {delta_exp_html}"
+        f"    </div>"
+        f"  </div>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -324,8 +468,9 @@ def budget_card(name, spent, limit):
     left_txt = f"剩餘 ${left:,.0f}" if left >= 0 else f"超支 ${-left:,.0f}"
     st.markdown(
         f"<div class='bud'>"
-        f"<div class='bud-top'><b>{html.escape(str(name))}</b><span class='t-{status}'>{ratio:.0%}</span></div>"
-        f"<div class='bud-sub'>${spent:,.0f} / ${limit:,.0f} {left_txt}</div>"
+        f"<div class='bud-top'><span class='bud-title'>{cat_badge_html(name)}<b>{html.escape(str(name))}</b></span>"
+        f"<span class='t-{status}'>{ratio:.0%}</span></div>"
+        f"<div class='bud-sub'>${spent:,.0f} / ${limit:,.0f} · {left_txt}</div>"
         f"<div class='bud-bar bud-{status}'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
         f"</div>",
         unsafe_allow_html=True,
@@ -337,7 +482,8 @@ def installment_card(title, paid_cnt, total_cnt, per_amt, remain_amt, end_ym):
     rem_cnt = max(0, total_cnt - paid_cnt)
     st.markdown(
         f"<div class='bud'>"
-        f"<div class='bud-top'><b>{html.escape(str(title))}</b><span class='t-inst'>已繳 {paid_cnt}/{total_cnt} 期（剩 {rem_cnt} 期）</span></div>"
+        f"<div class='bud-top'><span class='bud-title'>{cat_badge_html('分期', '💳', '#E2F0FF')}<b>{html.escape(str(title))}</b></span>"
+        f"<span class='t-inst'>已繳 {paid_cnt}/{total_cnt} 期（剩 {rem_cnt} 期）</span></div>"
         f"<div class='bud-sub'>每期 ${per_amt:,.0f} · 未清償餘額 ${remain_amt:,.0f} · 預計 {end_ym} 繳清</div>"
         f"<div class='bud-bar bud-inst'><i style='width:{min(ratio, 1) * 100:.1f}%'></i></div>"
         f"</div>",
@@ -448,8 +594,11 @@ def show(fig):
 
 
 HEADER_HTML = (
-    "<div class='app-header'><h1>我是有錢人</h1>"
+    "<div class='app-header'>"
+    "<div class='app-logo'>💰</div>"
+    "<div><h1>我是有錢人</h1>"
     "<p>一天一塊錢，七天就有七塊錢</p></div>"
+    "</div>"
 )
 
 
@@ -1263,14 +1412,15 @@ if sh and worksheet:
                     t_inc, t_exp = sums(df_today)
                     items_html = "".join(
                         f"<div class='recent-row'>"
-                        f"<span class='recent-l'><b>{html.escape(str(r['分類']))}</b>"
-                        f"<span class='recent-note'>{html.escape(str(r['備註']))}</span></span>"
-                        f"<span class='recent-r {'pos' if r['類型'] == '收入' else ''}'>"
+                        f"<span class='recent-l'>{cat_badge_html(r['分類'])}"
+                        f"<span class='recent-txt'><b>{html.escape(str(r['分類']))}</b>"
+                        f"<span class='recent-note'>{html.escape(str(r['備註']))}</span></span></span>"
+                        f"<span class='recent-r {'pos' if r['類型'] == '收入' else 'neg'}'>"
                         f"{'+' if r['類型'] == '收入' else '-'}${r['金額_num']:,.0f}</span>"
                         f"</div>"
                         for _, r in df_today.head(5).iterrows()
                     )
-                    more_txt = f"<div class='recent-more'>今天共 {len(df_today)} 筆（支出 ${t_exp:,.0f}" + (f" · 收入 ${t_inc:,.0f}" if t_inc > 0 else "") + "）</div>"
+                    more_txt = f"<div class='recent-more'>今天共 {len(df_today)} 筆 · 支出 ${t_exp:,.0f}" + (f" · 收入 ${t_inc:,.0f}" if t_inc > 0 else "") + "</div>"
                     st.markdown(
                         f"<div class='recent-box'><div class='recent-head'>今日已記帳</div>{items_html}{more_txt}</div>",
                         unsafe_allow_html=True,
